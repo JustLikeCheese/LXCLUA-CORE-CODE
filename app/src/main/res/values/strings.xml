@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="open_drawer">打开侧滑</string>
+    <string name="close_drawer">关闭侧滑</string>
+    <string name="app_name">LXCLUA</string>
+    
+</resources>

@@ -1,0 +1,52 @@
+pluginManagement {
+    // Use libs.versions.toml to manage plugin versions
+    plugins {
+        id 'com.android.application' version '8.13.2' apply false
+        id 'com.android.library' version '8.13.2' apply false
+        id 'org.jetbrains.kotlin.android' version '2.3.0' apply false
+        id 'kotlin-android' version '2.3.0' apply false
+        id 'com.vanniktech.maven.publish.base' version '0.29.0' apply false
+    }
+    
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin/'}
+        maven { url 'https://maven.aliyun.com/repository/google/'}
+        maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        // 优先使用阿里云镜像
+        maven { url 'https://maven.aliyun.com/repository/google/' }
+        maven { url 'https://maven.aliyun.com/repository/public/' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin/' }
+        maven { url 'https://maven.aliyun.com/repository/central/' }
+        
+        // 原始仓库作为备用
+        google()
+        mavenCentral()
+        maven { url 'https://dl.bintray.com/ppartisan/maven/' }
+        maven { url 'https://clojars.org/repo/' }
+        maven { url 'https://jitpack.io' }
+        maven { url 'https://artifactory.appodeal.com/appodeal-public/' }
+        maven {
+            url 'http://4thline.org/m2'
+            allowInsecureProtocol true
+        }
+
+    }
+}
+
+rootProject.name = 'LXCLUA'
+
+include ':app'
+include ':material-ui'
+include ':editor'
+include ':color-picker'
+include ':editor-lsp'

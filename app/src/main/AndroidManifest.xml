@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.difierline.lua.lxclua">
+    <!-- 显示通知 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 所有文件访问权限 -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <!-- 此应用可显示在其他应用上方 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 读取手机状态和身份 -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- 查看WLAN连接 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 查看网络连接 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 拥有完全的网络访问权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 修改或删除您共享存储空间中的内容 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- 读取您共享存储空间中的内容 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- 在后台使用位置信息 -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- 允许应用通过网络访问粗略的位置信息 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 查询所有软件包 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- 允许应用通过GPS获取访问精确的位置信息 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 获取额外的位置信息提供程序命令 -->
+    <uses-permission android:name="android.permission.ACCESS_LOCATION_EXTRA_COMMANDS" />
+    <!-- 从您的媒体收藏中读取位置信息 -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <!-- 「勿扰」模式使用权限 -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- 识别身体活动 -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- 在使用期间可访问身体传感器数据，如心率 -->
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <!-- 访问蓝牙设置 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <!-- 与蓝牙设备配对 -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <!-- 拍摄照片和视频 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 拨打电话 -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- 发送持久广播 -->
+    <uses-permission android:name="android.permission.BROADCAST_STICKY" />
+    <!-- 展开/收拢状态栏 -->
+    <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
+    <!-- 停用屏幕锁定 -->
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+    <!-- 连接WLAN网络和断开连接 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- 允许接收WLAN多播 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- 更改网络连接性 -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- 检索正在运行的应用 -->
+    <uses-permission android:name="android.permission.GET_TASKS" />
+    <!-- 计算应用存储空间 -->
+    <uses-permission android:name="android.permission.GET_PACKAGE_SIZE" />
+    <!-- 安装快捷方式 -->
+    <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
+    <!-- 安装应用程序 -->
+    <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
+    <!-- 更改您的音频设置 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 让应用始终运行 -->
+    <uses-permission android:name="android.permission.PERSISTENT_ACTIVITY" />
+    <!-- 读取日历活动和详情 -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- 读取通话记录 -->
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- 读取联系人 -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- 读取电话号码 -->
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+    <!-- 读取短信 -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- 读取同步设置 -->
+    <uses-permission android:name="android.permission.READ_SYNC_SETTINGS" />
+    <!-- 读取同步统计信息 -->
+    <uses-permission android:name="android.permission.READ_SYNC_STATS" />
+    <!-- 卸载快捷方式 -->
+    <uses-permission android:name="com.android.launcher.permission.UNINSTALL_SHORTCUT" />
+    <!-- 修改系统设置 -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- 修改您的通讯录 -->
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
+    <!-- 新建/修改/删除通话记录 -->
+    <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
+    <!-- 添加或修改日历活动，并在所有者不知情的情况下向邀请对象发送电子邮件 -->
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <!-- 拨打/接听SIP电话 -->
+    <uses-permission android:name="android.permission.USE_SIP" />
+    <!-- 使用指纹硬件 -->
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+    <!-- 使用生物特征硬件 -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- 授权使用「查看权限」 -->
+    <uses-permission android:name="android.permission.START_VIEW_PERMISSION_USAGE" />
+    <!-- 发送短信 -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- 请求安装文件包 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 请求忽略电池优化 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 在后台运行 -->
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
+    <!-- 控制近距离通信 -->
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- 防止手机休眠 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 开机启动 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 运行前台服务 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <application
+        android:theme="@style/Theme.Material3.Blue"
+        android:label="LXCLUA"
+        android:icon="@drawable/icon"
+        android:name="com.difierline.lua.LuaApplication"
+        android:largeHeap="true"
+        android:allowBackup="true"
+        android:hardwareAccelerated="true"
+        android:extractNativeLibs="true"
+        android:usesCleartextTraffic="true"
+        android:resizeableActivity="true"
+        android:supportsPictureInPicture="true"
+        android:requestLegacyExternalStorage="true"
+        android:sharedUserId="lxclua.core">
+        <uses-library android:name="org.apache.http.legacy" />
+        <meta-data
+            android:name="android.max_aspect"
+            android:value="4" />
+        <meta-data
+            android:name="BaiduMobAd_EXCEPTION_LOG"
+            android:value="true" />
+        <meta-data
+            android:name="EasyGoClient"
+            android:value="true" />
+        <activity
+            android:name="com.difierline.lua.Main"
+    android:exported="true"
+    android:launchMode="singleTop"
+    android:configChanges="keyboardHidden|orientation|screenSize"
+    android:windowSoftInputMode="adjustResize|stateHidden" />
+        <activity
+            android:name="com.difierline.lua.LuaActivity"
+            android:exported="true"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:windowSoftInputMode="adjustResize|stateHidden" />
+        <activity
+            android:name="com.difierline.lua.LuaActivityX"
+            android:exported="true"
+            android:excludeFromRecents="false"
+            android:configChanges="keyboardHidden|orientation|screenSize"
+            android:windowSoftInputMode="adjustResize|stateHidden"
+            android:documentLaunchMode="intoExisting" />
+        <activity
+            android:theme="@style/AppWelcome"
+            android:name="com.difierline.lua.SplashWelcome"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize|stateHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".ErrorActivity" />
+        <service
+            android:name="com.difierline.lua.LuaService"
+            android:enabled="true" />
+        <service
+            android:label="LXCLUA"
+            android:name="com.difierline.lua.LuaAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:enabled="true"
+            android:exported="true">
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+                <category android:name="android.accessibilityservice.category.FEEDBACK_AUDIBLE" />
+                <category android:name="android.accessibilityservice.category.FEEDBACK_HAPTIC" />
+                <category android:name="android.accessibilityservice.category.FEEDBACK_SPOKEN" />
+            </intent-filter>
+        </service>
+        <uses-library
+            android:name="androidx.window.extensions"
+            android:required="false" />
+        <uses-library
+            android:name="androidx.window.sidecar"
+            android:required="false" />
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:exported="false"
+            android:authorities="com.difierline.lua.lxclua.androidx-startup">
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                android:value="androidx.startup" />
+            <meta-data
+                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+                android:value="androidx.startup" />
+            <meta-data
+                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+                android:value="androidx.startup" />
+        </provider>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:exported="false"
+            android:authorities="com.difierline.lua.lxclua"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/androlua_filepaths" />
+        </provider>
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            android:permission="android.permission.DUMP"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+            </intent-filter>
+        </receiver>
+        <meta-data
+            android:name="com.bumptech.glide.integration.okhttp3.OkHttpGlideModule"
+            android:value="GlideModule" />
+    </application>
+</manifest>

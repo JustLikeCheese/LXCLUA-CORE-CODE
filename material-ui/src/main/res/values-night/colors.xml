@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <color name="colorBorder">#2E2F36</color>
+    <color name="colorCardBackground">#1A1B20</color>
+    <color name="colorFabBorder">#836F88</color>
+    <color name="colorRipple">#31FFFFFF</color>
+    
+</resources>
