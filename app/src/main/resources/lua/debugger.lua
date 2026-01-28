@@ -1352,9 +1352,9 @@ return function(status)
       end
 
       --搜索变量
-      local function searchVariables(keyword)
-        keyword = tostring(keyword)
-        keyword = string.lower(keyword)
+      local function searchVariables(keywor)
+        keywor = tostring(keywor)
+        keywor = string.lower(keywor)
         local tab = _ENV
         for k, v in ipairs(variable_node) do
           if type(tab[v]) == 'table' then
@@ -1372,7 +1372,7 @@ return function(status)
           local _k, _v = k, v
           local keyStr = type(k) ~= 'string' and string.format('[%s]', tostring(k)) or k
           
-          if keyword == '' or string.find(string.lower(keyStr), keyword, 1, true) then
+          if keywor == '' or string.find(string.lower(keyStr), keywor, 1, true) then
             local v_str = tostring(v)
             if utf8.len(v_str) > 80 then
               v_str = utf8.sub(v_str, 1, 80) .. '...'
@@ -1482,18 +1482,18 @@ return function(status)
         end)
       end
 
-      local function searchLogcat(keyword)
-        keyword = tostring(keyword)
-        if keyword == '' then
+      local function searchLogcat(keywor)
+        keywor = tostring(keywor)
+        if keywor == '' then
           read()
           return
         end
         
-        keyword = string.lower(keyword)
+        keywor = string.lower(keywor)
         table.clear(logcat_data)
         
         for k, v in ipairs(logcat_text) do
-          if string.find(string.lower(v), keyword, 1, true) then
+          if string.find(string.lower(v), keywor, 1, true) then
             logcat_data[#logcat_data + 1] = {
               txt = {
                 text = v,

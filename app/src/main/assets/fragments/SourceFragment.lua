@@ -361,7 +361,7 @@ function _M.getCode(id, page, isRefresh)
 end
 
 -- 专用搜索加载函数
-function _M.loadSearchPage(keyword, page)
+function _M.loadSearchPage(keywor, page)
   -- 添加搜索开始时的淡出效果（缩短时长）
   local fadeOut = AlphaAnimation(1, 0.3)
   fadeOut.setDuration(120) -- 减少30ms
@@ -373,7 +373,7 @@ function _M.loadSearchPage(keyword, page)
   local currentTag = currentTab and currentTab.getTag() or 0
 
   -- 发起搜索请求
-  OkHttpUtil.get(false, API_BASE_URL .. "list_posts.php?forum_id=" .. currentTag .. "&page=" .. page .. "&page_size=10&keyword=" .. keyword .. "&time=" .. os.time(), {
+  OkHttpUtil.get(false, API_BASE_URL .. "list_posts.php?forum_id=" .. currentTag .. "&page=" .. page .. "&page_size=10&keyword=" .. keywor .. "&time=" .. os.time(), {
     ["Authorization"] = "Bearer " .. tostring(getSQLite(3))
     }, true, function(code, body)
     isLoading = false

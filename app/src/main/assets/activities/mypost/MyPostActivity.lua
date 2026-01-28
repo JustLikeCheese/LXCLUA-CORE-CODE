@@ -360,7 +360,7 @@ local function initAdapter(i)
 end
 
 -- 加载数据
-function loadData(tabIndex, isFirstLoad, keyword)
+function loadData(tabIndex, isFirstLoad, keywor)
   -- 添加终止条件，避免无效请求
   if isLoadingList[tabIndex] or (not hasMoreList[tabIndex] and not isFirstLoad) then
     swipeRefreshLayouts[tabIndex].setRefreshing(false)
@@ -373,7 +373,7 @@ function loadData(tabIndex, isFirstLoad, keyword)
   local params = {
     ["page"] = pageList[tabIndex],
     ["page_size"] = 10,
-    ["keyword"] = keyword or "",
+    ["keyword"] = keywor or "",
     ["time"] = os.time()
   }
 
@@ -443,16 +443,16 @@ content.addTextChangedListener({
     end
 
     -- 获取当前搜索词
-    local keyword = tostring(editable)
+    local keywor = tostring(editable)
     -- 更新当前标签页的搜索关键词
-    searchKeywords[currentTab] = keyword
-    isSearching[currentTab] = keyword ~= ""
+    searchKeywords[currentTab] = keywor
+    isSearching[currentTab] = keywor ~= ""
 
     -- 设置新的搜索任务（500ms防抖）
     searchRunnable = Runnable {
       run = function()
         -- 确保搜索应用到当前标签页
-        refreshData(currentTab, keyword)
+        refreshData(currentTab, keywor)
       end
     }
     searchHandler.postDelayed(searchRunnable, 10)
@@ -460,11 +460,11 @@ content.addTextChangedListener({
 })
 
 -- 刷新数据
-function refreshData(tabIndex, keyword)
+function refreshData(tabIndex, keywor)
   pageList[tabIndex] = 1
   hasMoreList[tabIndex] = true
   -- 使用传入的关键词或当前标签页的关键词
-  loadData(tabIndex, true, keyword or searchKeywords[tabIndex])
+  loadData(tabIndex, true, keywor or searchKeywords[tabIndex])
 end
 
 -- 初始化所有适配器（但不加载数据）

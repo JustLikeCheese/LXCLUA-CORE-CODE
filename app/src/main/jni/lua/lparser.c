@@ -1298,6 +1298,8 @@ static void fieldsel (LexState *ls, expdesc *v) {
       case TK_WHEN: ts = luaS_newliteral(ls->L, "when"); break;
       case TK_WITH: ts = luaS_newliteral(ls->L, "with"); break;
       case TK_WHILE: ts = luaS_newliteral(ls->L, "while"); break;
+      case TK_KEYWORD: ts = luaS_newliteral(ls->L, "keyword"); break;
+      case TK_OPERATOR: ts = luaS_newliteral(ls->L, "operator"); break;
       default: error_expected(ls, TK_NAME);
     }
     codestring(&key, ts);
@@ -2247,6 +2249,8 @@ static void suffixedexp (LexState *ls, expdesc *v) {
             case TK_WHEN: ts = luaS_newliteral(ls->L, "when"); break;
             case TK_WITH: ts = luaS_newliteral(ls->L, "with"); break;
             case TK_WHILE: ts = luaS_newliteral(ls->L, "while"); break;
+            case TK_KEYWORD: ts = luaS_newliteral(ls->L, "keyword"); break;
+            case TK_OPERATOR: ts = luaS_newliteral(ls->L, "operator"); break;
             default: error_expected(ls, TK_NAME);
           }
           codestring(&key, ts);
@@ -3505,6 +3509,8 @@ static void cond_suffixedexp (LexState *ls, expdesc *v) {
             case TK_WHEN: ts = luaS_newliteral(ls->L, "when"); break;
             case TK_WITH: ts = luaS_newliteral(ls->L, "with"); break;
             case TK_WHILE: ts = luaS_newliteral(ls->L, "while"); break;
+            case TK_KEYWORD: ts = luaS_newliteral(ls->L, "keyword"); break;
+            case TK_OPERATOR: ts = luaS_newliteral(ls->L, "operator"); break;
             default: error_expected(ls, TK_NAME);
           }
           codestring(&key, ts);

@@ -372,8 +372,8 @@ recycler_code.addOnScrollListener(RecyclerView.OnScrollListener{
   end
 })
 
-function searchPosts(keyword)
-  currentKeyword = keyword or ""
+function searchPosts(keywor)
+  currentKeyword = keywor or ""
   refreshData()
 end
 
