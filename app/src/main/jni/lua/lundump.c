@@ -11,6 +11,7 @@
 
 
 #include <limits.h>
+#include <stdint.h>
 #include <string.h>
 #include <time.h>
 
@@ -41,7 +42,7 @@ typedef struct {
   lua_State *L;
   ZIO *Z;
   const char *name;
-  time_t timestamp;  /* 动态密钥：时间戳 */
+  int64_t timestamp;  /* 动态密钥：时间戳 */
   int opcode_map[NUM_OPCODES];  /* OPcode映射表 */
   int third_opcode_map[NUM_OPCODES];  /* 第三个OPcode映射表 */
   int string_map[256];  /* 字符串映射表（用于动态加密解密） */
@@ -636,34 +637,17 @@ static void checkHeader (LoadState *S) {
     error(S, "format mismatch");
   
   // 解密并检查LUAC_DATA
+  // 直接读取并验证 LUAC_DATA（无解密）
   const char *original_data = LUAC_DATA;
   size_t data_len = sizeof(LUAC_DATA) - 1;
-  char *encrypted_data = (char *)luaM_malloc_(S->L, data_len, 0);
-  char *decrypted_data = (char *)luaM_malloc_(S->L, data_len, 0);
+  char *read_data = (char *)luaM_malloc_(S->L, data_len, 0);
   
-  // 读取加密的LUAC_DATA
-  loadVector(S, encrypted_data, data_len);
+  loadVector(S, read_data, data_len);
   
-  // 使用时间戳的翻转作为密钥解密
-  time_t reversed_timestamp = 0;
-  time_t temp = S->timestamp;
-  for (size_t i = 0; i < sizeof(time_t); i++) {
-    reversed_timestamp = (reversed_timestamp << 8) | (temp & 0xFF);
-    temp >>= 8;
-  }
-  
-  // 解密数据
-  for (size_t i = 0; i < data_len; i++) {
-    decrypted_data[i] = encrypted_data[i] ^ ((char *)&reversed_timestamp)[i % sizeof(reversed_timestamp)];
-  }
-  
-  // 检查解密后的数据是否与原始LUAC_DATA匹配
-  if (memcmp(decrypted_data, original_data, data_len) != 0)
+  if (memcmp(read_data, original_data, data_len) != 0)
     error(S, "corrupted chunk");
   
-  // 释放内存
-  luaM_free_(S->L, encrypted_data, data_len);
-  luaM_free_(S->L, decrypted_data, data_len);
+  luaM_free_(S->L, read_data, data_len);
   
   checksize(S, Instruction);
   checksize(S, lua_Integer);

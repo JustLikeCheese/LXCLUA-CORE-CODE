@@ -2003,6 +2003,45 @@ static void primaryexp (LexState *ls, expdesc *v) {
       constructor(ls, v);
       return;
     }
+    case TK_DOLLAR: {
+      /**
+       * 宏调用语法: $name 或 $name(args)
+       * 等价于: _KEYWORDS["name"](args)
+       * 
+       * 用于关键字自举系统，让用户定义的关键字可以像原生语法一样使用
+       */
+      FuncState *fs = ls->fs;
+      int line = ls->linenumber;
+      TString *kwname;
+      expdesc keywords_table, key_exp;
+      int base;
+      
+      luaX_next(ls);  /* 跳过 '$' */
+      
+      /* 获取关键字名称 */
+      check(ls, TK_NAME);
+      kwname = ls->t.seminfo.ts;
+      luaX_next(ls);  /* 跳过关键字名称 */
+      
+      /* 获取 _KEYWORDS 表 */
+      singlevaraux(fs, luaS_newliteral(ls->L, "_KEYWORDS"), &keywords_table, 1);
+      if (keywords_table.k == VVOID) {
+        /* 从 _ENV 获取 _KEYWORDS */
+        expdesc env_key;
+        singlevaraux(fs, ls->envn, &keywords_table, 1);
+        codestring(&env_key, luaS_newliteral(ls->L, "_KEYWORDS"));
+        luaK_indexed(fs, &keywords_table, &env_key);
+      }
+      
+      /* 获取 _KEYWORDS[name] */
+      luaK_exp2anyreg(fs, &keywords_table);
+      codestring(&key_exp, kwname);
+      luaK_indexed(fs, &keywords_table, &key_exp);
+      
+      /* 返回函数表达式，让 suffixedexp 继续处理后续的函数调用 */
+      *v = keywords_table;
+      return;
+    }
     default: {
       luaX_syntaxerror(ls, "unexpected symbol");
     }
@@ -6468,6 +6507,76 @@ static void commandstat (LexState *ls, int line) {
 }
 
 
+/*
+** 关键字声明语法处理
+** 语法: keyword 关键字名(参数列表) 代码块 end
+** 等价于: function 关键字名(参数列表) 代码块 end; _KEYWORDS["关键字名"] = 关键字名
+** 
+** 参数：
+**   ls - 词法状态
+**   line - 行号
+** 说明：
+**   将函数引用存储到 _KEYWORDS 表，支持宏调用语法 $name(args)
+*/
+static void keywordstat (LexState *ls, int line) {
+  /* keywordstat -> KEYWORD funcname body */
+  expdesc v, b;
+  TString *kwname;
+  
+  luaX_next(ls);  /* skip KEYWORD */
+  
+  /* 先保存关键字名（不消费 token） */
+  check(ls, TK_NAME);
+  kwname = ls->t.seminfo.ts;
+  
+  /* 使用 singlevar 获取变量描述符（这会消费 NAME token） */
+  singlevar(ls, &v);
+  
+  /* 检查是否为只读 */
+  check_readonly(ls, &v);
+  
+  /* 解析函数体 */
+  body(ls, &b, 0, line);
+  
+  /* 存储函数到变量 */
+  luaK_storevar(ls->fs, &v, &b);
+  luaK_fixline(ls->fs, line);
+  
+  /* 将函数引用注册到 _KEYWORDS 表: _KEYWORDS[关键字名] = 函数引用 */
+  {
+    FuncState *fs = ls->fs;
+    expdesc keywords_table, key_exp, func_exp;
+    
+    /* 获取 _KEYWORDS 全局表 */
+    singlevaraux(fs, luaS_newliteral(ls->L, "_KEYWORDS"), &keywords_table, 1);
+    if (keywords_table.k == VVOID) {
+      /* _KEYWORDS 不存在，从 _ENV 获取 */
+      expdesc env_key;
+      singlevaraux(fs, ls->envn, &keywords_table, 1);
+      codestring(&env_key, luaS_newliteral(ls->L, "_KEYWORDS"));
+      luaK_indexed(fs, &keywords_table, &env_key);
+    }
+    
+    /* 重新获取函数变量的值 */
+    singlevaraux(fs, kwname, &func_exp, 1);
+    if (func_exp.k == VVOID) {
+      /* 从 _ENV 获取 */
+      expdesc env_key2;
+      singlevaraux(fs, ls->envn, &func_exp, 1);
+      codestring(&env_key2, kwname);
+      luaK_indexed(fs, &func_exp, &env_key2);
+    }
+    luaK_exp2anyreg(fs, &func_exp);
+    
+    /* 设置 _KEYWORDS[关键字名] = 函数引用 */
+    luaK_exp2anyregup(fs, &keywords_table);
+    codestring(&key_exp, kwname);
+    luaK_indexed(fs, &keywords_table, &key_exp);
+    luaK_storevar(fs, &keywords_table, &func_exp);
+  }
+}
+
+
 static void funcstat (LexState *ls, int line) {
   /* funcstat -> FUNCTION funcname body */
   int ismethod;
@@ -7935,6 +8044,10 @@ static void statement (LexState *ls) {
     }
     case TK_COMMAND: {  /* stat -> commandstat */
       commandstat(ls, line);
+      break;
+    }
+    case TK_KEYWORD: {  /* stat -> keywordstat */
+      keywordstat(ls, line);
       break;
     }
     case TK_LOCAL: {  /* stat -> localstat */

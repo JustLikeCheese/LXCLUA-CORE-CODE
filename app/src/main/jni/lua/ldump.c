@@ -12,6 +12,7 @@
 
 #include <limits.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 #include <stdio.h>
 
@@ -34,7 +35,7 @@ typedef struct {
   void *data;
   int strip;
   int status;
-  time_t timestamp;
+  int64_t timestamp;
   int opcode_map[NUM_OPCODES];  /* OPcode映射表 */
   int reverse_opcode_map[NUM_OPCODES];  /* 反向OPcode映射表 */
   int third_opcode_map[NUM_OPCODES];  /* 第三个OPcode映射表 */
@@ -574,26 +575,8 @@ static void dumpHeader (DumpState *D) {
   
   dumpByte(D, LUAC_FORMAT);
   
-  // 打乱LUAC_DATA，使用动态密钥的翻转
-  const char *original_data = LUAC_DATA;
-  size_t data_len = sizeof(LUAC_DATA) - 1;
-  char *scrambled_data = (char *)luaM_malloc_(D->L, data_len, 0);
-  
-  // 使用时间戳的翻转作为密钥
-  time_t reversed_timestamp = 0;
-  time_t temp = D->timestamp;
-  for (size_t i = 0; i < sizeof(time_t); i++) {
-    reversed_timestamp = (reversed_timestamp << 8) | (temp & 0xFF);
-    temp >>= 8;
-  }
-  
-  // 对LUAC_DATA进行XOR加密，使用翻转后的时间戳作为密钥
-  for (size_t i = 0; i < data_len; i++) {
-    scrambled_data[i] = original_data[i] ^ ((char *)&reversed_timestamp)[i % sizeof(reversed_timestamp)];
-  }
-  
-  dumpBlock(D, scrambled_data, data_len);
-  luaM_free_(D->L, scrambled_data, data_len);
+  // 直接写入 LUAC_DATA（无加密）
+  dumpBlock(D, LUAC_DATA, sizeof(LUAC_DATA) - 1);
   
   dumpByte(D, sizeof(Instruction));
   dumpByte(D, sizeof(lua_Integer));
