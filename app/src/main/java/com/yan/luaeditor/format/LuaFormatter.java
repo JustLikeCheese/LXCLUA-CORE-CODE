@@ -278,11 +278,13 @@ public class LuaFormatter extends AsyncFormatter {
                         bol = false;
                         break;
 
-                    // 动态关键字和运算符重载：按普通关键字处理
+                    // 动态关键字和运算符重载：增加缩进级别
                     case KEYWORD:
                     case OPERATOR_KW:
                         sb.append(createIndent(level * indentWidth));
                         sb.append(tokenText);
+                        level++;
+                        blockStack.push(token);
                         bol = false;
                         break;
 
