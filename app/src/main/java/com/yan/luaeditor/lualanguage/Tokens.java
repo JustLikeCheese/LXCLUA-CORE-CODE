@@ -77,6 +77,7 @@ public enum Tokens {
     WHEN,
     KEYWORD,
     OPERATOR_KW,
+    DOLLAR,
     XOR,
     QUESTION,
     EQEQ,

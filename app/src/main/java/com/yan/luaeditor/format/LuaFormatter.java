@@ -279,6 +279,7 @@ public class LuaFormatter extends AsyncFormatter {
                         break;
 
                     // 动态关键字和运算符重载：增加缩进级别
+                    case DOLLAR:
                     case KEYWORD:
                     case OPERATOR_KW:
                         sb.append(createIndent(level * indentWidth));

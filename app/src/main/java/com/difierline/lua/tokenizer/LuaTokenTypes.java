@@ -60,6 +60,7 @@ public enum LuaTokenTypes {
     WHILE,          // while
     KEYWORD,        // keyword (动态关键字)
     OPERATOR_KW,    // operator (运算符重载)
+    DOLLAR,         // $
 
     // OOP 面向对象关键字
     ABSTRACT,       // abstract (抽象方法/类)
