@@ -6,22 +6,26 @@
 # Your platform. See PLATS for possible values.
 PLAT= guess
 
-CC= gcc -std=gnu99
-CFLAGS= -O2 -Wall -Wextra
+CC= gcc -std=c23 -pipe
+CFLAGS= -O3 -funroll-loops -fomit-frame-pointer -ffunction-sections -fdata-sections -fstrict-aliasing -g0 -DNDEBUG -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wimplicit-function-declaration
 
 AR= ar rcu
 RANLIB= ranlib
 RM= rm -f
 UNAME= uname
 
-SYSCFLAGS=
+SYSCFLAGS= -DLUA_DL_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE
 SYSLDFLAGS=
 SYSLIBS=
 
 MYCFLAGS=
 MYLDFLAGS=
-MYLIBS= -lz
+MYLIBS=
 MYOBJS= 
+
+# Combine flags for linker
+LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
+LIBS= -lm $(SYSLIBS) $(MYLIBS)
 
 # Special flags for compiler modules; -Os reduces code size.
 CMCFLAGS= 
@@ -32,8 +36,8 @@ CMCFLAGS=
 PLATS= guess aix bsd c89 freebsd generic ios linux macosx mingw posix solaris
 
 LUA_A=	liblua.a
-CORE_O=	lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o
-LIB_O=	lauxlib.o lbaselib.o lcorolib.o ldblib.o liolib.o lmathlib.o loadlib.o loslib.o lstrlib.o ltablib.o lutf8lib.o linit.o json_parser.o lboolib.o lbitlib.o lptrlib.o ludatalib.o lvmlib.o
+CORE_O= lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o lobfuscate.o
+LIB_O= lauxlib.o lbaselib.o lcorolib.o ldblib.o liolib.o lmathlib.o loadlib.o loslib.o lstrlib.o ltablib.o lutf8lib.o linit.o json_parser.o lboolib.o lbitlib.o lptrlib.o ludatalib.o lvmlib.o lclass.o ltranslator.o lsmgrlib.o logtable.o sha256.o
 BASE_O= $(CORE_O) $(LIB_O) $(MYOBJS)
 
 LUA_T=	lua
@@ -42,8 +46,11 @@ LUA_O=	lua.o
 LUAC_T=	luac
 LUAC_O=	luac.o
 
-ALL_O= $(BASE_O) $(LUA_O) $(LUAC_O)
-ALL_T= $(LUA_A) $(LUA_T) $(LUAC_T)
+LBCDUMP_T=	lbcdump
+LBCDUMP_O=	lbcdump.o
+
+ALL_O= $(BASE_O) $(LUA_O) $(LUAC_O) $(LBCDUMP_O)
+ALL_T= $(LUA_A) $(LUA_T) $(LUAC_T) $(LBCDUMP_T)
 ALL_A= $(LUA_A)
 
 # Targets start here.
@@ -65,6 +72,9 @@ $(LUA_T): $(LUA_O) $(LUA_A)
 $(LUAC_T): $(LUAC_O) $(LUA_A)
 	$(CC) -o $@ $(LDFLAGS) $(LUAC_O) $(LUA_A) $(LIBS)
 
+$(LBCDUMP_T): $(LBCDUMP_O)
+	$(CC) -o $@ $(LDFLAGS) $(LBCDUMP_O)
+
 $(WEBSERVER_A): $(WEBSERVER_O) $(LUA_A)
 	$(CC) -shared -o $@ $(LDFLAGS) $(WEBSERVER_O) $(LUA_A) $(LIBS) -lws2_32
 
@@ -73,6 +83,8 @@ test:
 
 clean:
 	$(RM) $(ALL_T) $(ALL_O)
+	$(RM) lua.exe luac.exe lbcdump.exe lua55.dll
+	$(RM) *.o *.a *.dll
 
 depend:
 	@$(CC) $(CFLAGS) -MM l*.c
@@ -123,17 +135,26 @@ ios:
 	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_IOS"
 
 Linux linux:
-	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_LINUX" SYSLIBS="-Wl,-E -ldl"
+	$(MAKE) $(ALL) CC="clang -std=c23" CFLAGS="-O2 -fPIC -DNDEBUG -D_DEFAULT_SOURCE" SYSCFLAGS="-DLUA_USE_LINUX" SYSLIBS="-Wl,-E -ldl -lm" SYSLDFLAGS="-s"
+	strip --strip-unneeded $(LUA_T) $(LUAC_T) || true
+
+termux:
+	$(MAKE) $(ALL) CC="clang -std=c23" CFLAGS="-O2 -fPIC -DNDEBUG" SYSCFLAGS="-DLUA_USE_LINUX -DLUA_USE_DLOPEN" SYSLIBS="-ldl -lm" SYSLDFLAGS="-Wl,--build-id -fuse-ld=lld"
+	strip --strip-unneeded $(LUA_T) $(LUAC_T) || true
 
 Darwin macos macosx:
 	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_MACOSX -DLUA_USE_READLINE" SYSLIBS="-lreadline"
 
 mingw:
-	$(MAKE) "LUA_A=lua55.dll" "LUA_T=lua.exe" \
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=lua55.dll" "LUA_T=lua.exe" \
 	"AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded" \
-	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_USE_DLOPEN" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
+	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_USE_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
 	"MYOBJS=$(MYOBJS)" lua.exe
-	$(MAKE) "LUAC_T=luac.exe" luac.exe
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=lua55.dll" "LUAC_T=luac.exe" \
+	"AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded" \
+	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_USE_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
+	luac.exe
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s" lbcdump.exe
 
 
 posix:

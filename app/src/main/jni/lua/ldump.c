@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <time.h>
 #include <stdio.h>
+#include <math.h>
+#include <string.h>
 
 #include "lua.h"
 
@@ -23,7 +25,13 @@
 #include "lstate.h"
 #include "lundump.h"
 
+#include "lobfuscate.h"
+
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBIW_MALLOC(sz) malloc(sz)
+#define STBIW_REALLOC(p,newsz) realloc(p,newsz)
+#define STBIW_FREE(p) free(p)
 #include "stb_image_write.h"
 
 #include "sha256.h"
@@ -40,6 +48,9 @@ typedef struct {
   int reverse_opcode_map[NUM_OPCODES];  /* 反向OPcode映射表 */
   int third_opcode_map[NUM_OPCODES];  /* 第三个OPcode映射表 */
   int string_map[256];  /* 字符串映射表（用于动态加密解密） */
+  int obfuscate_flags;  /* 混淆标志位 */
+  unsigned int obfuscate_seed;  /* 混淆随机种子 */
+  const char *log_path;  /* 调试日志输出路径 */
 } DumpState;
 
 
@@ -546,23 +557,31 @@ static void dumpFunction (DumpState *D, const Proto *f, TString *psource) {
   /* 生成动态时间戳密钥 */
   D->timestamp = time(NULL);
   
-  if (D->strip || f->source == psource)
+  /* 如果启用了控制流扁平化，先对函数进行扁平化处理 */
+  Proto *work_proto = (Proto *)f;  /* 转换为非const指针以便修改 */
+  if (D->obfuscate_flags & OBFUSCATE_CFF) {
+    luaO_flatten(D->L, work_proto, D->obfuscate_flags, D->obfuscate_seed, D->log_path);
+    /* 更新种子，使每个函数使用不同的种子 */
+    D->obfuscate_seed = D->obfuscate_seed * 1664525 + 1013904223;
+  }
+  
+  if (D->strip || work_proto->source == psource)
     dumpString(D, NULL);  /* no debug info or same source as its parent */
   else
-    dumpString(D, f->source);
-  dumpInt(D, f->linedefined);
-  dumpInt(D, f->lastlinedefined);
-  dumpByte(D, f->numparams);
-  dumpByte(D, f->is_vararg);
-  dumpByte(D, f->maxstacksize);
-  dumpByte(D, f->difierline_mode);  /* 新增：写入自定义标志 */
-  dumpInt(D, f->difierline_magicnum);  /* 新增：写入自定义版本号 */
-  dumpVar(D, f->difierline_data);  /* 新增：写入自定义数据字段 */
-  dumpCode(D, f);
-  dumpConstants(D, f);
-  dumpUpvalues(D, f);
-  dumpProtos(D, f);
-  dumpDebug(D, f);
+    dumpString(D, work_proto->source);
+  dumpInt(D, work_proto->linedefined);
+  dumpInt(D, work_proto->lastlinedefined);
+  dumpByte(D, work_proto->numparams);
+  dumpByte(D, work_proto->is_vararg);
+  dumpByte(D, work_proto->maxstacksize);
+  dumpByte(D, work_proto->difierline_mode);  /* 新增：写入自定义标志 */
+  dumpInt(D, work_proto->difierline_magicnum);  /* 新增：写入自定义版本号 */
+  dumpVar(D, work_proto->difierline_data);  /* 新增：写入自定义数据字段 */
+  dumpCode(D, work_proto);
+  dumpConstants(D, work_proto);
+  dumpUpvalues(D, work_proto);
+  dumpProtos(D, work_proto);
+  dumpDebug(D, work_proto);
 }
 
 
@@ -597,6 +616,52 @@ int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data,
   D.data = data;
   D.strip = strip;
   D.status = 0;
+  D.obfuscate_flags = 0;  /* 默认不启用混淆 */
+  D.obfuscate_seed = 0;
+  D.log_path = NULL;  /* 不输出日志 */
+  dumpHeader(&D);
+  dumpByte(&D, f->sizeupvalues);
+  dumpFunction(&D, f, NULL);
+  return D.status;
+}
+
+
+/*
+** dump Lua function as precompiled chunk with control flow flattening
+** 带控制流扁平化的字节码导出函数
+** 
+** @param L Lua状态
+** @param f 函数原型
+** @param w 写入器函数
+** @param data 写入器数据
+** @param strip 是否剥离调试信息
+** @param obfuscate_flags 混淆标志位（参见lobfuscate.h中的OBFUSCATE_*常量）
+** @param seed 随机种子（0表示使用时间作为种子）
+** @param log_path 调试日志输出路径（NULL表示不输出日志）
+** @return 成功返回0，失败返回错误码
+**
+** 混淆标志位说明：
+** - OBFUSCATE_NONE (0): 不进行混淆
+** - OBFUSCATE_CFF (1): 启用控制流扁平化
+** - OBFUSCATE_BLOCK_SHUFFLE (2): 随机打乱基本块顺序
+** - OBFUSCATE_BOGUS_BLOCKS (4): 插入虚假基本块
+** - OBFUSCATE_STATE_ENCODE (8): 状态值编码混淆
+**
+** 使用示例：
+** luaU_dump_obfuscated(L, f, w, data, 1, OBFUSCATE_CFF | OBFUSCATE_BLOCK_SHUFFLE, 0, "cff.log");
+*/
+int luaU_dump_obfuscated(lua_State *L, const Proto *f, lua_Writer w, void *data,
+                         int strip, int obfuscate_flags, unsigned int seed,
+                         const char *log_path) {
+  DumpState D;
+  D.L = L;
+  D.writer = w;
+  D.data = data;
+  D.strip = strip;
+  D.status = 0;
+  D.obfuscate_flags = obfuscate_flags;
+  D.obfuscate_seed = (seed != 0) ? seed : (unsigned int)time(NULL);
+  D.log_path = log_path;
   dumpHeader(&D);
   dumpByte(&D, f->sizeupvalues);
   dumpFunction(&D, f, NULL);
