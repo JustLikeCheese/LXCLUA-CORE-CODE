@@ -42,9 +42,9 @@ public final class AutoCompletePackages {
                     "getupvalue", "getuservalue", "sethook", "setlocal", "setmetatable",
                     "setupvalue", "setuservalue", "traceback", "upvalueid", "upvaluejoin"));
             put("io", Arrays.asList(
-                    "close", "flush", "info", "input", "isdir", "lines", "ls", "mkdir", "mmap", "munmap", "open",
-                    "output", "popen", "read", "readall", "stderr", "stdin", "stdout", "tmpfile",
-                    "type", "write"));
+                     "close", "flush", "info", "input", "isdir", "linecount", "lines", "ls", "mkdir", "mmap", "munmap", "open",
+                     "output", "popen", "read", "readall", "readline", "readlines", "stderr", "stdin", "stdout", "tmpfile",
+                     "type", "write", "writeline", "writelines"));
             put("luajava", Arrays.asList(
                     "astable", "bindClass", "clear", "coding", "createArray", "createProxy",
                     "getContext", "instanceof", "loadLib", "loaded", "luapath", "new", "newArray",
