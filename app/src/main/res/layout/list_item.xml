@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+     xmlns:android="http://schemas.android.com/apk/res/android"
+     xmlns:app="http://schemas.android.com/apk/res-auto"
+     android:layout_height="wrap_content"
+     android:layout_width="match_parent"
+     android:padding="12dp"
+     android:orientation="vertical">
+
+        <com.google.android.material.button.MaterialButtonGroup
+             android:layout_height="30dp"
+             android:layout_width="wrap_content">
+
+            <com.google.android.material.button.MaterialButton
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 app:icon="@drawable/ic_content_copy"
+                 app:iconSize="16dp"
+                 style="?attr/materialIconButtonOutlinedStyle"
+                 android:id="@+id/btn_copy" />
+
+            <com.google.android.material.button.MaterialButton
+                 android:layout_height="wrap_content"
+                 android:layout_width="wrap_content"
+                 app:icon="@drawable/ic_translate"
+                 app:iconSize="16dp"
+                 style="?attr/materialIconButtonOutlinedStyle"
+                 android:id="@+id/btn_translate" />
+
+        </com.google.android.material.button.MaterialButtonGroup>
+
+    <TextView
+         android:layout_height="wrap_content"
+         android:layout_width="match_parent"
+         android:textAppearance="?android:attr/textAppearanceListItem"
+         android:id="@+id/content" />
+
+</LinearLayout>

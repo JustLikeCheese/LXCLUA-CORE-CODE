@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+    <declare-styleable name="Theme">
+        <attr name="materialSwitchBarStyle" format="reference" />
+    </declare-styleable>
+    
+    <declare-styleable name="FloatingActionButton">
+        <attr name="backgroundTint" />
+    </declare-styleable>
+    
+    <declare-styleable name="ExtendedFloatingActionButton">
+        <attr name="android:text" />
+        <attr
+            name="icon"
+            format="reference" />
+        <attr name="backgroundTint" />
+    </declare-styleable>
+    
+    <declare-styleable name="MaterialTextField">
+        <attr name="android:hint" />
+        <attr name="android:singleLine" />
+        <attr name="textSize" />
+        <attr name="boxCornerRadii" />
+        <attr name="endIconMode" />
+    </declare-styleable>
+    
+    <declare-styleable name="MaterialHeroButton">
+        <attr name="android:text" />
+        <attr name="android:textSize" />
+        <attr name="icon" />
+        <attr name="color" />
+        <attr name="rippleColor" />
+        <attr name="android:textColor" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialSwitchBar">
+        <attr name="android:text" />
+        <attr name="android:textColor" />
+        <attr name="android:textAppearance" />
+        <attr name="android:paddingTop" />
+        <attr name="android:paddingBottom" />
+        <attr name="android:paddingStart" />
+        <attr name="android:paddingEnd" />
+        <attr name="shapeAppearance" />
+        <attr name="backgroundTint" format="color" />
+        <attr name="circleRevealEnabled" format="boolean" />
+    </declare-styleable>
+    
+        <declare-styleable name="SimpleMenuPreference">
+        <attr name="android:popupMenuStyle" />
+        <attr name="android:popupTheme" />
+        <attr name="popupBackgroundRadius" format="dimension" />
+    </declare-styleable>
+
+    <declare-styleable name="SimpleMenuPopupWindow">
+        <attr name="listMarginHorizontal" format="dimension" />
+        <attr name="listMarginVertical" format="dimension" />
+        <attr name="listItemPadding" format="dimension" />
+        <attr name="menuElevation" format="dimension" />
+        <attr name="increment" format="dimension" />
+        <attr name="maxIncrements" format="integer" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialChip">
+        <attr name="android:text" />
+        <attr name="android:textColor" />
+        <attr name="android:checkable" />
+        <attr name="android:checked" />
+        <attr name="chipIcon" format="reference" />
+        <attr name="closeIcon" format="reference" />
+        <attr name="chipType" format="enum">
+            <enum name="input" value="0" />
+            <enum name="choice" value="1" />
+            <enum name="filter" value="2" />
+            <enum name="action" value="3" />
+        </attr>
+        <attr name="chipBackgroundColor" format="color" />
+        <attr name="chipStrokeColor" format="color" />
+        <attr name="chipStrokeWidth" format="dimension" />
+        <attr name="chipIconTint" format="color" />
+        <attr name="closeIconTint" format="color" />
+        <attr name="chipCornerRadius" format="dimension" />
+        <attr name="rippleColor" format="color" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialChipGroup">
+        <attr name="singleSelection" format="boolean" />
+        <attr name="selectionRequired" format="boolean" />
+        <attr name="checkedChip" format="reference" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialProgressIndicator">
+        <attr name="indeterminate" format="boolean" />
+        <attr name="progress" format="integer" />
+        <attr name="maxProgress" format="integer" />
+        <attr name="indicatorSize" format="dimension" />
+        <attr name="trackThickness" format="dimension" />
+        <attr name="indicatorColor" format="color" />
+        <attr name="trackColor" format="color" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialSlider">
+        <attr name="valueFrom" format="float" />
+        <attr name="valueTo" format="float" />
+        <attr name="value" format="float" />
+        <attr name="stepSize" format="float" />
+        <attr name="thumbRadius" format="dimension" />
+        <attr name="haloRadius" format="dimension" />
+        <attr name="trackHeight" format="dimension" />
+        <attr name="thumbColor" format="color" />
+        <attr name="trackColorActive" format="color" />
+        <attr name="trackColorInactive" format="color" />
+        <attr name="haloColor" format="color" />
+        <attr name="tickColor" format="color" />
+        <attr name="tickColorActive" format="color" />
+        <attr name="tickColorInactive" format="color" />
+        <attr name="tickVisible" format="boolean" />
+        <attr name="haloVisible" format="boolean" />
+        <attr name="labelBehaviorFits" format="boolean" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialRangeSlider">
+        <attr name="valueFrom" />
+        <attr name="valueTo" />
+        <attr name="valuesStart" format="float" />
+        <attr name="valuesEnd" format="float" />
+        <attr name="stepSize" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialTabLayout">
+        <attr name="tabIndicatorColor" format="color" />
+        <attr name="tabIndicatorHeight" format="dimension" />
+        <attr name="tabTextColor" format="color" />
+        <attr name="tabSelectedTextColor" format="color" />
+        <attr name="tabIconTint" format="color" />
+        <attr name="tabRippleColor" format="color" />
+        <attr name="tabIndicatorFullWidth" format="boolean" />
+    </declare-styleable>
+
+    <declare-styleable name="MaterialBadge">
+        <attr name="badgeNumber" format="integer" />
+        <attr name="badgeMaxNumber" format="integer" />
+        <attr name="badgeExactNumber" format="boolean" />
+        <attr name="badgeVisible" format="boolean" />
+        <attr name="badgeRadius" format="dimension" />
+        <attr name="badgeMinRadius" format="dimension" />
+        <attr name="badgeHorizontalPadding" format="dimension" />
+        <attr name="badgeVerticalPadding" format="dimension" />
+        <attr name="badgeHorizontalOffset" format="dimension" />
+        <attr name="badgeVerticalOffset" format="dimension" />
+        <attr name="badgeBackgroundColor" format="color" />
+        <attr name="badgeTextColor" format="color" />
+        <attr name="badgeTextSize" format="dimension" />
+    </declare-styleable>
+
+</resources>

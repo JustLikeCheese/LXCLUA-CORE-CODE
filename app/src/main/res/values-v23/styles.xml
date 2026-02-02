@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="XCLUA1" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA1</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA1</item>
+        <item name="android:colorAccent">@color/XCLUA1</item>
+        <item name="android:statusBarColor">@color/XCLUA1</item>
+    </style>
+
+    <style name="XCLUA2" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA2</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA2</item>
+        <item name="android:colorAccent">@color/XCLUA2</item>
+        <item name="android:statusBarColor">@color/XCLUA2</item>
+    </style>
+
+    <style name="XCLUA3" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA3</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA3</item>
+        <item name="android:colorAccent">@color/XCLUA3</item>
+        <item name="android:statusBarColor">@color/XCLUA3</item>
+    </style>
+
+    <style name="XCLUA4" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA4</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA4</item>
+        <item name="android:colorAccent">@color/XCLUA4</item>
+        <item name="android:statusBarColor">@color/XCLUA4</item>
+    </style>
+
+    <style name="XCLUA5" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA5</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA5</item>
+        <item name="android:colorAccent">@color/XCLUA5</item>
+        <item name="android:statusBarColor">@color/XCLUA5</item>
+    </style>
+
+    <style name="XCLUA6" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA6</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA6</item>
+        <item name="android:colorAccent">@color/XCLUA6</item>
+        <item name="android:statusBarColor">@color/XCLUA6</item>
+    </style>
+
+    <style name="XCLUA7" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA7</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA7</item>
+        <item name="android:colorAccent">@color/XCLUA7</item>
+        <item name="android:statusBarColor">@color/XCLUA7</item>
+    </style>
+
+    <style name="XCLUA8" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA8</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA8</item>
+        <item name="android:colorAccent">@color/XCLUA8</item>
+        <item name="android:statusBarColor">@color/XCLUA8</item>
+    </style>
+
+    <style name="XCLUA9" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA9</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA9</item>
+        <item name="android:colorAccent">@color/XCLUA9</item>
+        <item name="android:statusBarColor">@color/XCLUA9</item>
+    </style>
+
+    <style name="XCLUA10" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA10</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA10</item>
+        <item name="android:colorAccent">@color/XCLUA10</item>
+        <item name="android:statusBarColor">@color/XCLUA10</item>
+    </style>
+
+    <style name="XCLUA11" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA11</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA11</item>
+        <item name="android:colorAccent">@color/XCLUA11</item>
+        <item name="android:statusBarColor">@color/XCLUA11</item>
+    </style>
+
+    <style name="XCLUA12" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA12</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA12</item>
+        <item name="android:colorAccent">@color/XCLUA12</item>
+        <item name="android:statusBarColor">@color/XCLUA12</item>
+    </style>
+
+    <style name="XCLUA13" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA13</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA13</item>
+        <item name="android:colorAccent">@color/XCLUA13</item>
+        <item name="android:statusBarColor">@color/XCLUA13</item>
+    </style>
+
+    <style name="XCLUA14" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA14</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA14</item>
+        <item name="android:colorAccent">@color/XCLUA14</item>
+        <item name="android:statusBarColor">@color/XCLUA14</item>
+    </style>
+
+    <style name="XCLUA15" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA15</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA15</item>
+        <item name="android:colorAccent">@color/XCLUA15</item>
+        <item name="android:statusBarColor">@color/XCLUA15</item>
+    </style>
+
+    <style name="XCLUA16" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA16</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA16</item>
+        <item name="android:colorAccent">@color/XCLUA16</item>
+        <item name="android:statusBarColor">@color/XCLUA16</item>
+    </style>
+
+    <style name="XCLUA17" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA17</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA17</item>
+        <item name="android:colorAccent">@color/XCLUA17</item>
+        <item name="android:statusBarColor">@color/XCLUA17</item>
+    </style>
+
+    <style name="XCLUA18" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA18</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA18</item>
+        <item name="android:colorAccent">@color/XCLUA18</item>
+        <item name="android:statusBarColor">@color/XCLUA18</item>
+    </style>
+
+    <style name="XCLUA19" parent="@android:style/Theme.Material.Light.DarkActionBar">
+        <item name="android:colorPrimary">@color/XCLUA19</item>
+        <item name="android:colorPrimaryDark">@color/XCLUA19</item>
+        <item name="android:colorAccent">@color/XCLUA19</item>
+        <item name="android:statusBarColor">@color/XCLUA19</item>
+    </style>
+    <style name="AppWelcome" parent="Theme.Material3.Blue" >
+        <item name="colorPrimaryDark">?windowBackgroundColor</item>
+        <item name="android:windowBackground">@drawable/welcome</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowDisablePreview">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="windowActionModeOverlay">true</item>
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="windowBackgroundColor">?android:attr/colorBackground</item>
+    </style>
+    
+</resources>

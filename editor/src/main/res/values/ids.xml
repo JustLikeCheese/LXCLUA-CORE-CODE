@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="panel_btn_select_all" type="id" />
+    <item name="panel_btn_copy" type="id" />
+    <item name="panel_btn_cut" type="id" />
+    <item name="panel_btn_paste" type="id" />
+    <item name="panel_btn_long_select" type="id" />
+    <item name="panel_btn_search" type="id" />
+    <item name="panel_btn_format" type="id" />    
+</resources>
