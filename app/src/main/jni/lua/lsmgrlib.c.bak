@@ -98,7 +98,9 @@ static void init_app_dirs(lua_State *L) {
     app_files_dir = strdup("./");
   }
 #endif
+}
 
+  
   /* 构建共享目录路径 */
   size_t len = strlen(app_files_dir) + strlen(SHARED_DIR_NAME) + 2;
   shared_data_dir = (char *)malloc(len);

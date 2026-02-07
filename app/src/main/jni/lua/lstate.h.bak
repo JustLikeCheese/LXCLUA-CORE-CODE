@@ -360,15 +360,12 @@ typedef struct global_State {
 /*
 ** 'per thread' state
 */
-/**
- * @brief Per-thread state structure.
- */
 struct lua_State {
   CommonHeader;
   lu_byte status;
   lu_byte allowhook;
-  unsigned short nci;  /**< number of items in 'ci' list */
-  StkIdRel top;  /**< first free slot in the stack */
+  unsigned short nci;  /* number of items in 'ci' list */
+  StkIdRel top;  /* first free slot in the stack */
   global_State *l_G;
   CallInfo *ci;  /* call info for current function */
   StkIdRel stack_last;  /* end of stack (last element + 1) */

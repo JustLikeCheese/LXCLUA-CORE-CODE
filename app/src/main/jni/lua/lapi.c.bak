@@ -251,14 +251,13 @@ LUA_API void lua_rotate (lua_State *L, int idx, int n) {
   lua_unlock(L);
 }
 
-/**
- * @brief Rotates stack elements between a given index and the top.
- * 
- * @param L Lua state.
- * @param idx Stack index (start of the segment to rotate).
- * @param n Number of positions to rotate. Positive for right, negative for left.
- * @note This function rotates all values from `idx` to the top of the stack.
- */
+/*
+** 将栈上指定位置的多个值进行旋转
+** @param L Lua状态机
+** @param idx 栈索引（要旋转的段的起始位置）
+** @param n 旋转的正负数量，正数表示向右旋转，负数表示向左旋转
+** 注意：这个函数会旋转从idx到栈顶的所有值
+*/
 LUA_API void lua_rotate_multi (lua_State *L, int idx, int n) {
   int top_index;
   lua_lock(L);
