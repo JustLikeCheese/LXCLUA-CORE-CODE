@@ -12,6 +12,10 @@
 #define _BSD_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
+
 #include <errno.h>
 #include <locale.h>
 #include <stdlib.h>
@@ -39,8 +43,13 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/syscall.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
 #include <linux/seccomp.h>
+#endif
+#if defined(__APPLE__)
+#include <pthread.h>
+#endif
 #endif
 
 #include "lua.h"
@@ -435,24 +444,40 @@ static int os_exit (lua_State *L) {
 
 static int os_sleep (lua_State *L) {
   lua_Number seconds = luaL_checknumber(L, 1);
+#ifdef _WIN32
+  /* Windows上使用Sleep函数，单位是毫秒 */
+  Sleep((DWORD)(seconds * 1000));
+#else
+  /* Unix上使用nanosleep函数 */
   struct timespec ts;
   ts.tv_sec = (time_t)seconds;
   ts.tv_nsec = (long)((seconds - ts.tv_sec) * 1000000000);
   nanosleep(&ts, NULL);
+#endif
   return 0;
 }
 
 static int os_usleep (lua_State *L) {
   lua_Integer microseconds = luaL_checkinteger(L, 1);
+#ifdef _WIN32
+  /* Windows上使用Sleep函数，单位是毫秒，需要转换 */
+  Sleep((DWORD)((microseconds + 999) / 1000));
+#else
+  /* Unix上使用nanosleep函数 */
   struct timespec ts;
   ts.tv_sec = microseconds / 1000000;
   ts.tv_nsec = (microseconds % 1000000) * 1000;
   nanosleep(&ts, NULL);
+#endif
   return 0;
 }
 
 static int os_getpid (lua_State *L) {
+#ifdef _WIN32
+  lua_pushinteger(L, GetCurrentProcessId());
+#else
   lua_pushinteger(L, getpid());
+#endif
   return 1;
 }
 
@@ -462,18 +487,35 @@ static int os_randbytes (lua_State *L) {
     luaL_argerror(L, 1, "number of bytes must be positive");
   }
   
+  char *buffer = (char *)lua_newuserdata(L, n);
+  
+#ifdef _WIN32
+  /* Windows上使用CryptGenRandom生成随机字节 */
+  HCRYPTPROV hProv;
+  if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+    return luaL_error(L, "cannot acquire crypto context: %lu", GetLastError());
+  }
+  
+  if (!CryptGenRandom(hProv, (DWORD)n, (BYTE *)buffer)) {
+    CryptReleaseContext(hProv, 0);
+    return luaL_error(L, "cannot generate random bytes: %lu", GetLastError());
+  }
+  
+  CryptReleaseContext(hProv, 0);
+#else
+  /* Unix上使用/dev/urandom */
   int fd = open("/dev/urandom", O_RDONLY);
   if (fd < 0) {
     return luaL_error(L, "cannot open /dev/urandom: %s", strerror(errno));
   }
   
-  char *buffer = (char *)lua_newuserdata(L, n);
   ssize_t bytes_read = read(fd, buffer, n);
   close(fd);
   
   if (bytes_read != n) {
     return luaL_error(L, "cannot read from /dev/urandom: %s", strerror(errno));
   }
+#endif
   
   lua_pushlstring(L, buffer, n);
   return 1;
@@ -481,6 +523,21 @@ static int os_randbytes (lua_State *L) {
 
 static int os_procname (lua_State *L) {
   char name[128] = {0};
+  
+#ifdef _WIN32
+  /* Windows上使用GetModuleFileName获取进程名 */
+  DWORD size = GetModuleFileName(NULL, name, sizeof(name) - 1);
+  if (size == 0) {
+    return luaL_error(L, "cannot get module file name: %lu", GetLastError());
+  }
+  
+  /* 提取文件名部分 */
+  char *last_backslash = strrchr(name, '\\');
+  if (last_backslash != NULL) {
+    strcpy(name, last_backslash + 1);
+  }
+#else
+  /* Unix上使用/proc/self/comm */
   int fd = open("/proc/self/comm", O_RDONLY);
   if (fd < 0) {
     return luaL_error(L, "cannot open /proc/self/comm: %s", strerror(errno));
@@ -495,12 +552,21 @@ static int os_procname (lua_State *L) {
       name[bytes_read - 1] = '\0';
     }
   }
+#endif
   
   lua_pushstring(L, name);
   return 1;
 }
 
 static int os_tickcount (lua_State *L) {
+#ifdef _WIN32
+  /* Windows上使用GetTickCount64获取毫秒数，然后转换为微秒 */
+  ULONGLONG tick_ms = GetTickCount64();
+  lua_Integer tick = (lua_Integer)tick_ms * 1000LL;
+  lua_pushinteger(L, tick);
+  return 1;
+#else
+  /* Unix上使用clock_gettime */
   struct timespec ts;
   if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
     return luaL_error(L, "cannot get clock time: %s", strerror(errno));
@@ -509,9 +575,16 @@ static int os_tickcount (lua_State *L) {
   lua_Integer tick = (lua_Integer)ts.tv_sec * 1000000LL + (lua_Integer)ts.tv_nsec / 1000LL;
   lua_pushinteger(L, tick);
   return 1;
+#endif
 }
 
 static int os_tracerpid(lua_State *L) { 
+#ifdef _WIN32
+  /* Windows上不支持tracerpid，返回-1 */
+  lua_pushinteger(L, -1); 
+  return 1; 
+#else
+  /* Unix上从/proc/self/status获取 */
   FILE *fp = fopen("/proc/self/status", "r"); 
   if (!fp) { 
     lua_pushnil(L); 
@@ -529,16 +602,45 @@ static int os_tracerpid(lua_State *L) {
   fclose(fp); 
   lua_pushinteger(L, tracer_pid); 
   return 1; 
+#endif
 }
 
 static int os_tid(lua_State *L) { 
+#ifdef _WIN32
+  /* Windows上使用GetCurrentThreadId获取线程ID */
+  DWORD tid = GetCurrentThreadId();
+  lua_pushinteger(L, tid); 
+  return 1; 
+#elif defined(__EMSCRIPTEN__)
+  /* Emscripten/WASM环境下返回固定值 */
+  lua_pushinteger(L, 1);
+  return 1;
+#elif defined(__APPLE__)
+  uint64_t tid;
+  pthread_threadid_np(NULL, &tid);
+  lua_pushinteger(L, (lua_Integer)tid);
+  return 1;
+#else
+  /* Unix上使用syscall获取线程ID */
   pid_t tid = syscall(SYS_gettid); 
   lua_pushinteger(L, tid); 
   return 1; 
+#endif
 }
 
 static int os_arg0(lua_State *L) { 
-  /* 从/proc/self/cmdline获取argv[0] */ 
+#ifdef _WIN32
+  /* Windows上使用GetModuleFileName获取argv[0] */
+  char buffer[1024] = {0};
+  DWORD size = GetModuleFileName(NULL, buffer, sizeof(buffer) - 1);
+  if (size == 0) {
+    return luaL_error(L, "cannot get module file name: %lu", GetLastError());
+  }
+  
+  lua_pushstring(L, buffer); 
+  return 1; 
+#else
+  /* Unix上从/proc/self/cmdline获取argv[0] */ 
   int fd = open("/proc/self/cmdline", O_RDONLY); 
   if (fd < 0) { 
     return luaL_error(L, "cannot open /proc/self/cmdline: %s", strerror(errno)); 
@@ -555,10 +657,16 @@ static int os_arg0(lua_State *L) {
   /* /proc/self/cmdline中的参数以null字符分隔，第一个参数就是argv[0] */ 
   lua_pushstring(L, buffer); 
   return 1; 
+#endif
 }
 
 static int os_libs(lua_State *L) {
-  /* 从/proc/self/maps获取已加载的共享库列表 */
+#ifdef _WIN32
+  /* Windows上不支持获取共享库列表，返回空表 */
+  lua_newtable(L);
+  return 1;
+#else
+  /* Unix上从/proc/self/maps获取已加载的共享库列表 */
   FILE *fp = fopen("/proc/self/maps", "r");
   if (!fp) {
     return luaL_error(L, "cannot open /proc/self/maps: %s", strerror(errno));
@@ -583,10 +691,16 @@ static int os_libs(lua_State *L) {
   
   fclose(fp);
   return 1;
+#endif
 }
 
 static int os_stacksize(lua_State *L) {
-  /* 从/proc/self/stat获取第28个字段（stack size） */
+#ifdef _WIN32
+  /* Windows上不支持获取栈大小，返回0 */
+  lua_pushinteger(L, 0);
+  return 1;
+#else
+  /* Unix上从/proc/self/stat获取第28个字段（stack size） */
   FILE *fp = fopen("/proc/self/stat", "r");
   if (!fp) {
     return luaL_error(L, "cannot open /proc/self/stat: %s", strerror(errno));
@@ -617,9 +731,15 @@ static int os_stacksize(lua_State *L) {
   
   lua_pushinteger(L, stacksize);
   return 1;
+#endif
 }
 
 static int os_seccomp(lua_State *L) {
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+  /* Windows/Emscripten/macOS上不支持seccomp */
+  return luaL_error(L, "seccomp is not supported on this platform");
+#else
+  /* Unix上的seccomp实现 */
   int mode = luaL_optinteger(L, 1, 0);
   
   if (mode == 0) {
@@ -675,10 +795,37 @@ static int os_seccomp(lua_State *L) {
   } else {
     return luaL_argerror(L, 1, "invalid seccomp mode (0=query, 1=filter, 2=strict)");
   }
+#endif
 }
 
 static int os_mtime(lua_State *L) {
-  /* 获取/proc/self/exe的修改时间 */
+#ifdef _WIN32
+  /* Windows上获取可执行文件的修改时间 */
+  char buffer[1024] = {0};
+  DWORD size = GetModuleFileName(NULL, buffer, sizeof(buffer) - 1);
+  if (size == 0) {
+    return luaL_error(L, "cannot get module file name: %lu", GetLastError());
+  }
+  
+  WIN32_FIND_DATA findData;
+  HANDLE hFind = FindFirstFile(buffer, &findData);
+  if (hFind == INVALID_HANDLE_VALUE) {
+    return luaL_error(L, "cannot find file: %lu", GetLastError());
+  }
+  
+  FindClose(hFind);
+  
+  /* 将FILETIME转换为Unix时间戳 */
+  FILETIME ft = findData.ftLastWriteTime;
+  ULARGE_INTEGER uli;
+  uli.LowPart = ft.dwLowDateTime;
+  uli.HighPart = ft.dwHighDateTime;
+  lua_Integer mtime = (uli.QuadPart - 116444736000000000LL) / 10000000LL;
+  
+  lua_pushinteger(L, mtime);
+  return 1;
+#else
+  /* Unix上获取/proc/self/exe的修改时间 */
   struct stat st;
   if (lstat("/proc/self/exe", &st) == -1) {
     return luaL_error(L, "cannot stat /proc/self/exe: %s", strerror(errno));
@@ -686,9 +833,15 @@ static int os_mtime(lua_State *L) {
   
   lua_pushinteger(L, (lua_Integer)st.st_mtime);
   return 1;
+#endif
 }
 
 static int os_syscall(lua_State *L) {
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+  /* Windows/Emscripten/macOS上不支持syscall */
+  return luaL_error(L, "syscall is not supported on this platform");
+#else
+  /* Unix上的syscall实现 */
   /* 极简封装系统调用入口 */
   long syscall_num = luaL_checkinteger(L, 1);
   long arg1 = luaL_optinteger(L, 2, 0);
@@ -707,10 +860,19 @@ static int os_syscall(lua_State *L) {
   
   lua_pushinteger(L, result);
   return 1;
+#endif
 }
 
 static int os_aname(lua_State *L) {
-  /* 从/proc/sys/kernel/ostype获取系统代号 */
+#ifdef _WIN32
+  /* Windows上返回"Windows" */
+  lua_pushstring(L, "Windows");
+  return 1;
+#elif defined(__APPLE__)
+  lua_pushstring(L, "Darwin");
+  return 1;
+#else
+  /* Unix上从/proc/sys/kernel/ostype获取系统代号 */
   FILE *fp = fopen("/proc/sys/kernel/ostype", "r");
   if (!fp) {
     return luaL_error(L, "cannot open /proc/sys/kernel/ostype: %s", strerror(errno));
@@ -732,26 +894,63 @@ static int os_aname(lua_State *L) {
   
   lua_pushstring(L, buffer);
   return 1;
+#endif
 }
 
 static int os_fsuid(lua_State *L) {
-  /* 获取进程的文件系统用户ID */
-  uid_t ruid, euid, suid;
-  getresuid(&ruid, &euid, &suid);
-  /* 在Android上，文件系统用户ID通常等于有效用户ID */
+#ifdef _WIN32
+  /* Windows上不支持文件系统用户ID，返回0和true */
+  lua_pushinteger(L, 0);
+  lua_pushboolean(L, 1);
+  return 2;
+#else
+  /* Unix上获取进程的文件系统用户ID */
+  uid_t ruid = getuid();
+  uid_t euid = geteuid();
   lua_pushinteger(L, euid);
   lua_pushboolean(L, ruid == euid);
   return 2;
+#endif
 }
 
 static int os_getppid(lua_State *L) {
-  /* 获取父进程ID */
+#ifdef _WIN32
+  /* Windows上使用CreateToolhelp32Snapshot获取父进程ID */
+  DWORD ppid = 0;
+  DWORD pid = GetCurrentProcessId();
+  
+  HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (hSnapshot != INVALID_HANDLE_VALUE) {
+    PROCESSENTRY32 pe32;
+    pe32.dwSize = sizeof(PROCESSENTRY32);
+    
+    if (Process32First(hSnapshot, &pe32)) {
+      do {
+        if (pe32.th32ProcessID == pid) {
+          ppid = pe32.th32ParentProcessID;
+          break;
+        }
+      } while (Process32Next(hSnapshot, &pe32));
+    }
+    
+    CloseHandle(hSnapshot);
+  }
+  
+  lua_pushinteger(L, ppid);
+  return 1;
+#else
+  /* Unix上使用getppid获取父进程ID */
   pid_t ppid = getppid();
   lua_pushinteger(L, ppid);
   return 1;
+#endif
 }
 
 static int os_prctl(lua_State *L) {
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+  /* Windows/Emscripten上不支持prctl */
+  return luaL_error(L, "prctl is not supported on this platform");
+#else
   /**
    * 封装 prctl 系统调用
    * @param L Lua 状态机
@@ -800,6 +999,7 @@ static int os_prctl(lua_State *L) {
   
   lua_pushinteger(L, result);
   return 1;
+#endif
 }
 
 

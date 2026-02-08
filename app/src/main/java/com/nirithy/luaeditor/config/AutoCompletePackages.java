@@ -63,9 +63,16 @@ public final class AutoCompletePackages {
                     "config", "cpath", "loaded", "loaders", "loadlib", "path", "preload",
                     "searchers", "searchpath", "seeall"));
             put("string", Arrays.asList(
-                    "byte", "char", "data", "data2png", "dump", "file", "file2png", "find", "format",
-                    "gfind", "gmatch", "gsub", "len", "lower", "match", "png2data", "png2file",
-                    "rep", "reverse", "sub", "upper"));
+             // 原有
+             "byte", "char", "data", "data2png", "dump", "file", "file2png", "find", "format",
+             "gfind", "gmatch", "gsub", "len", "lower", "match", "png2data", "png2file",
+             "rep", "reverse", "sub", "upper",
+             // 新增（上面缺少的）
+             "aes_decrypt", "aes_encrypt", "contains", "crc32", "endswith", "escape",
+             "fromhex", "hex", "imageresize", "ltrim", "pack", "packsize", "rtrim",
+             "sha256", "split", "startswith", "trim", "unpack"
+            ));
+
             put("table", Arrays.asList(
                     "add","clear","create", "clone", "concat", "const", "find","fill", "foreach", "foreachi", "gfind",
                     "keys","insert", "maxn", "move", "pack", "remove", "size", "sort", "unpack","vals"));

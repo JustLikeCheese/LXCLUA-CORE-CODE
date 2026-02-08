@@ -12,6 +12,10 @@
 #define _BSD_SOURCE
 #define _POSIX_C_SOURCE 200809L
 
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
+
 #include <errno.h>
 #include <locale.h>
 #include <stdlib.h>
@@ -39,8 +43,13 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/syscall.h>
+#if defined(__linux__)
 #include <sys/prctl.h>
 #include <linux/seccomp.h>
+#endif
+#if defined(__APPLE__)
+#include <pthread.h>
+#endif
 #endif
 
 #include "lua.h"
@@ -606,6 +615,11 @@ static int os_tid(lua_State *L) {
   /* Emscripten/WASM环境下返回固定值 */
   lua_pushinteger(L, 1);
   return 1;
+#elif defined(__APPLE__)
+  uint64_t tid;
+  pthread_threadid_np(NULL, &tid);
+  lua_pushinteger(L, (lua_Integer)tid);
+  return 1;
 #else
   /* Unix上使用syscall获取线程ID */
   pid_t tid = syscall(SYS_gettid); 
@@ -721,8 +735,8 @@ static int os_stacksize(lua_State *L) {
 }
 
 static int os_seccomp(lua_State *L) {
-#if defined(_WIN32) || defined(__EMSCRIPTEN__)
-  /* Windows/Emscripten上不支持seccomp */
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+  /* Windows/Emscripten/macOS上不支持seccomp */
   return luaL_error(L, "seccomp is not supported on this platform");
 #else
   /* Unix上的seccomp实现 */
@@ -823,8 +837,8 @@ static int os_mtime(lua_State *L) {
 }
 
 static int os_syscall(lua_State *L) {
-#if defined(_WIN32) || defined(__EMSCRIPTEN__)
-  /* Windows/Emscripten上不支持syscall */
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+  /* Windows/Emscripten/macOS上不支持syscall */
   return luaL_error(L, "syscall is not supported on this platform");
 #else
   /* Unix上的syscall实现 */
@@ -853,6 +867,9 @@ static int os_aname(lua_State *L) {
 #ifdef _WIN32
   /* Windows上返回"Windows" */
   lua_pushstring(L, "Windows");
+  return 1;
+#elif defined(__APPLE__)
+  lua_pushstring(L, "Darwin");
   return 1;
 #else
   /* Unix上从/proc/sys/kernel/ostype获取系统代号 */
@@ -930,8 +947,8 @@ static int os_getppid(lua_State *L) {
 }
 
 static int os_prctl(lua_State *L) {
-#if defined(_WIN32) || defined(__EMSCRIPTEN__)
-  /* Windows/Emscripten上不支持prctl */
+#if defined(_WIN32) || defined(__EMSCRIPTEN__) || defined(__APPLE__)
+  /* Windows/Emscripten/macOS上不支持prctl */
   return luaL_error(L, "prctl is not supported on this platform");
 #else
   /**
