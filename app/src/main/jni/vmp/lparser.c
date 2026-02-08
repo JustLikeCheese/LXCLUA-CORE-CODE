@@ -2446,6 +2446,7 @@ static void funcstat (LexState *ls, int line) {
 }
 
 
+
 static void exprstat (LexState *ls) {
   /* stat -> func | assignment */
   FuncState *fs = ls->fs;

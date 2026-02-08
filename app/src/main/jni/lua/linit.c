@@ -68,11 +68,19 @@ static const luaL_Reg stdlibs[] = {
   {LUA_VMLIBNAME, luaopen_vm},
   {LUA_BITLIBNAME, luaopen_bit},
   {LUA_PTRLIBNAME, luaopen_ptr},
+  {"bit32", luaopen_bit},
 
+#ifndef _WIN32
   {LUA_SMGRNAME, luaopen_smgr},
   {"translator", luaopen_translator},
-  {"libc", luaopen_libc},
   {"logtable", luaopen_logtable},
+
+  // 仅安卓额外加 libc
+#ifdef __ANDROID__
+  {"libc", luaopen_libc},
+#endif
+
+#endif
 
   {NULL, NULL}
 };
@@ -118,15 +126,23 @@ static const luaL_Reg loadedlibs[] = {
   {LUA_DBLIBNAME, luaopen_debug},
   {LUA_BITLIBNAME, luaopen_bit},
   {LUA_PTRLIBNAME, luaopen_ptr},
+  {"bit32", luaopen_bit},
+
 #ifndef _WIN32
   {LUA_SMGRNAME, luaopen_smgr},
   {"translator", luaopen_translator},
-  {"libc", luaopen_libc},
   {"logtable", luaopen_logtable},
+
+  // 仅安卓额外加载 libc
+#ifdef __ANDROID__
+  {"libc", luaopen_libc},
+#endif
+
 #endif
 
   {NULL, NULL}
 };
+
 
 
 LUALIB_API void luaL_openlibs (lua_State *L) {

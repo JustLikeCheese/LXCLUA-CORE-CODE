@@ -1,3 +1,4 @@
+
 /*
 ** $Id: lobfuscate.c $
 ** Control Flow Flattening Obfuscation for Lua bytecode
@@ -22,9 +23,13 @@
 #include "lobject.h"
 #include "lstate.h"
 #include "ltm.h"
+#include "ldebug.h"
 #include "ldo.h"
 #include "lgc.h"
 #include "lvm.h"
+#include "ltable.h"
+#include "lfunc.h"
+#include "lstring.h"
 
 /* 全局日志文件指针 - 由 luaO_flatten 设置 */
 static FILE *g_cff_log_file = NULL;
@@ -138,7 +143,6 @@ int luaO_isBlockTerminator (OpCode op) {
     case OP_FORPREP:
     case OP_TFORPREP:
     case OP_TFORLOOP:
-    case OP_TFORCALL:
       return 1;
     default:
       return 0;
@@ -159,6 +163,50 @@ int luaO_isJumpInstruction (OpCode op) {
     case OP_TFORPREP:
     case OP_TFORLOOP:
       return 1;
+    default:
+      return 0;
+  }
+}
+
+
+/* 
+** 每个基本块的最大指令数，超过此值将尝试拆分以增加控制流复杂度 
+*/
+#define MAX_BLOCK_SIZE  10
+
+/*
+** 检查指令是否为成对指令的第一部分（不应该在此指令后拆分基本块）
+** @param op 操作码
+** @return 是成对指令返回1，否则返回0
+*/
+static int isPairedInstruction (OpCode op) {
+  switch (op) {
+    /* 条件测试类：后跟 JMP */
+    case OP_EQ: case OP_LT: case OP_LE:
+    case OP_EQK: case OP_EQI: case OP_LTI:
+    case OP_LEI: case OP_GTI: case OP_GEI:
+    case OP_TEST: case OP_TESTSET: case OP_TESTNIL:
+    case OP_IS: case OP_INSTANCEOF:
+      return 1;
+      
+    /* 算术/位运算类：后跟 MMBIN 系列 (Lua 5.4) */
+    case OP_ADDI: case OP_ADDK: case OP_SUBK: case OP_MULK:
+    case OP_MODK: case OP_POWK: case OP_DIVK: case OP_IDIVK:
+    case OP_BANDK: case OP_BORK: case OP_BXORK: case OP_SHLI:
+    case OP_SHRI: case OP_ADD: case OP_SUB: case OP_MUL:
+    case OP_MOD: case OP_POW: case OP_DIV: case OP_IDIV:
+    case OP_BAND: case OP_BOR: case OP_BXOR: case OP_SHL:
+    case OP_SHR: case OP_UNM: case OP_BNOT: case OP_LEN:
+    case OP_CONCAT:
+      return 1;
+      
+    /* 其他特定对 */
+    case OP_TFORCALL: /* 后跟 TFORLOOP */
+    case OP_LOADKX:   /* 后跟 EXTRAARG */
+    case OP_NEWTABLE: /* 可能后跟 EXTRAARG */
+    case OP_SETLIST:  /* 可能后跟 EXTRAARG */
+      return 1;
+      
     default:
       return 0;
   }
@@ -263,6 +311,7 @@ static CFFContext *initContext (lua_State *L, Proto *f, int flags, unsigned int 
   ctx->num_fake_funcs = 0;
   ctx->seed = seed;
   ctx->obfuscate_flags = flags;
+  ctx->skip_pc0 = 0;
   
   /* 分配基本块数组 */
   ctx->blocks = (BasicBlock *)luaM_malloc_(L, sizeof(BasicBlock) * ctx->block_capacity, 0);
@@ -450,8 +499,20 @@ int luaO_identifyBlocks (CFFContext *ctx) {
   CFF_LOG("--- 划分基本块 ---");
   int block_start = 0;
   for (int pc = 1; pc <= code_size; pc++) {
-    /* 当遇到新的起始点或代码结束时，创建一个基本块 */
-    if (pc == code_size || is_leader[pc]) {
+    int force_split = 0;
+    
+    /* 检查是否超过最大块大小，如果是则尝试在此处拆分 */
+    if (pc < code_size && (pc - block_start >= MAX_BLOCK_SIZE)) {
+      /* 只有当前一个指令不是成对指令时，才允许在此处拆分 */
+      OpCode prev_op = GET_OPCODE(f->code[pc-1]);
+      if (!isPairedInstruction(prev_op)) {
+        force_split = 1;
+        CFF_LOG("  在 PC %d 强制拆分长基本块", pc);
+      }
+    }
+
+    /* 当遇到新的起始点、强制拆分点或代码结束时，创建一个基本块 */
+    if (pc == code_size || is_leader[pc] || force_split) {
       int idx = addBlock(ctx, block_start, pc);
       if (idx < 0) {
         luaM_free_(ctx->L, is_leader, code_size);
@@ -691,101 +752,406 @@ static int emitFakeFunction (CFFContext *ctx, int func_id, unsigned int *seed,
 static int emitFakeFunctionBlocks (CFFContext *ctx, int func_id, unsigned int *seed,
                                     int entry_jmp_pc);
 
+/* 二分查找分发器相关结构 */
+typedef struct StateBlock {
+  int state;      /* 编码后的状态值 */
+  int block_idx;  /* 块索引（真实或虚假） */
+} StateBlock;
 
-/*
-** 生成一条随机的虚假指令
-** @param ctx 上下文
-** @param seed 随机种子指针（会被更新）
-** @return 生成的指令
-**
-** 虚假指令类型：
-** - LOADI: 加载随机整数到寄存器
-** - ADDI: 寄存器加立即数
-** - MOVE: 寄存器间移动
-** - LOADK: 加载常量（如果有常量）
-*/
+/* 比较函数，用于状态排序 */
+static int compareStateBlocks(const void *a, const void *b) {
+  return ((StateBlock *)a)->state - ((StateBlock *)b)->state;
+}
+
+/* 递归生成二分查找树 */
+static int emitBinarySearch (CFFContext *ctx, StateBlock *sb, int low, int high, int *all_block_jmp_pcs) {
+  if (low == high) {
+    /* 叶子节点：精确匹配状态 */
+    CFF_LOG("  [PC=%d] EQI R[%d], %d, k=1 (块%d)", 
+            ctx->new_code_size, ctx->state_reg, sb[low].state, sb[low].block_idx);
+    Instruction cmp_inst = CREATE_ABCk(OP_EQI, ctx->state_reg, int2sC(sb[low].state), 0, 1);
+    if (emitInstruction(ctx, cmp_inst) < 0) return -1;
+    
+    Instruction jmp_inst = CREATE_sJ(OP_JMP, 0, 0);
+    int jmp_pc = emitInstruction(ctx, jmp_inst);
+    if (jmp_pc < 0) return -1;
+    all_block_jmp_pcs[sb[low].block_idx] = jmp_pc;
+
+    /* 混淆：在此处插入 NOP 是安全的 */
+    if (ctx->obfuscate_flags & OBFUSCATE_RANDOM_NOP) {
+      int num_nops = 1 + (ctx->seed % 2);
+      for (int i = 0; i < num_nops; i++) {
+        NEXT_RAND(ctx->seed);
+        emitInstruction(ctx, luaO_createNOP(ctx->seed));
+      }
+    }
+    return 0;
+  } else {
+    int mid = low + (high - low) / 2;
+    /* 
+    ** Lua LTI 语义: if ((R[A] < sB) ~= k) then pc++
+    ** 当 k=1 时: if (R[A] < sB) 则执行下一条跳转指令，否则跳过它。
+    */
+    int next_state = sb[mid + 1].state;
+    CFF_LOG("  [PC=%d] LTI R[%d], %d, k=1 (二分查找范围 [%d, %d])", 
+            ctx->new_code_size, ctx->state_reg, next_state, low, high);
+    Instruction lti = CREATE_ABCk(OP_LTI, ctx->state_reg, int2sC(next_state), 0, 1);
+    if (emitInstruction(ctx, lti) < 0) return -1;
+    
+    /* 跳转到左半部分 */
+    int jmp_left_pc = emitInstruction(ctx, CREATE_sJ(OP_JMP, 0, 0));
+    if (jmp_left_pc < 0) return -1;
+
+    /* 混淆：在此处插入 NOP 是安全的，因为上面是无条件跳转 */
+    if (ctx->obfuscate_flags & OBFUSCATE_RANDOM_NOP) {
+      int num_nops = 1 + (ctx->seed % 2);
+      for (int i = 0; i < num_nops; i++) {
+        NEXT_RAND(ctx->seed);
+        emitInstruction(ctx, luaO_createNOP(ctx->seed));
+      }
+    }
+    
+    /* 跳转到右半部分 */
+    int jmp_right_pc = emitInstruction(ctx, CREATE_sJ(OP_JMP, 0, 0));
+    if (jmp_right_pc < 0) return -1;
+
+    /* 混淆：在此处插入 NOP 是安全的 */
+    if (ctx->obfuscate_flags & OBFUSCATE_RANDOM_NOP) {
+      int num_nops = 1 + (ctx->seed % 2);
+      for (int i = 0; i < num_nops; i++) {
+        NEXT_RAND(ctx->seed);
+        emitInstruction(ctx, luaO_createNOP(ctx->seed));
+      }
+    }
+    
+    /* 生成左半部分代码 */
+    int left_start = ctx->new_code_size;
+    if (emitBinarySearch(ctx, sb, low, mid, all_block_jmp_pcs) < 0) return -1;
+    SETARG_sJ(ctx->new_code[jmp_left_pc], left_start - jmp_left_pc - 1);
+    
+    /* 生成右半部分代码 */
+    int right_start = ctx->new_code_size;
+    if (emitBinarySearch(ctx, sb, mid + 1, high, all_block_jmp_pcs) < 0) return -1;
+    SETARG_sJ(ctx->new_code[jmp_right_pc], right_start - jmp_right_pc - 1);
+    
+    return 0;
+  }
+}
+
+/* 虚假块数量（基于真实块数量的倍数） */
+#define BOGUS_BLOCK_RATIO  2  /* 每个真实块生成2个虚假块 */
+#define BOGUS_BLOCK_MIN_INSTS  3  /* 虚假块最少指令数 */
+#define BOGUS_BLOCK_MAX_INSTS  8  /* 虚假块最多指令数 */
+
+/* 生成一条随机的虚假指令 */
 static Instruction generateBogusInstruction (CFFContext *ctx, unsigned int *seed) {
   int state_reg = ctx->state_reg;
-  int max_reg = state_reg;  /* 使用状态寄存器之前的寄存器 */
+  int max_reg = state_reg > 0 ? state_reg : 1;
   
   NEXT_RAND(*seed);
-  int inst_type = *seed % 4;
+  int inst_type = *seed % 10;
   
   NEXT_RAND(*seed);
-  int reg = (*seed % max_reg);  /* 目标寄存器 */
+  int reg = (*seed % max_reg);
   if (reg < 0) reg = 0;
   
   NEXT_RAND(*seed);
-  int value = (*seed % 1000) - 500;  /* -500 ~ 499 */
+  int value = (*seed % 1000) - 500;
   
   switch (inst_type) {
-    case 0:  /* LOADI reg, value */
-      return CREATE_ABx(OP_LOADI, reg, value + OFFSET_sBx);
-    
-    case 1:  /* ADDI reg, reg, value */
-      return CREATE_ABCk(OP_ADDI, reg, reg, int2sC(value % 100), 0);
-    
-    case 2:  /* MOVE reg, other_reg */
-      {
+    case 0: return CREATE_ABx(OP_LOADI, reg, value + OFFSET_sBx);
+    case 1: return CREATE_ABCk(OP_ADDI, reg, reg, int2sC(value % 100), 0);
+    case 2: {
         NEXT_RAND(*seed);
         int src_reg = (*seed % max_reg);
-        if (src_reg < 0) src_reg = 0;
         return CREATE_ABCk(OP_MOVE, reg, src_reg, 0, 0);
-      }
-    
-    default:  /* LOADI with different value */
-      NEXT_RAND(*seed);
-      return CREATE_ABx(OP_LOADI, reg, (*seed % 2000) + OFFSET_sBx);
+    }
+    case 3: return CREATE_ABCk(OP_ADD, reg, (*seed % max_reg), ((*seed >> 8) % max_reg), 0);
+    case 4: return CREATE_ABCk(OP_SUB, reg, (*seed % max_reg), ((*seed >> 8) % max_reg), 0);
+    case 5: return CREATE_ABCk(OP_NOT, reg, (*seed % max_reg), 0, 0);
+    case 6: return CREATE_ABCk(OP_LEN, reg, (*seed % max_reg), 0, 0);
+    case 7: return CREATE_ABCk(OP_SHLI, reg, (*seed % max_reg), int2sC(value % 31), 0);
+    case 8: return CREATE_ABCk(OP_BNOT, reg, (*seed % max_reg), 0, 0);
+    default: return CREATE_ABx(OP_LOADI, reg, (*seed % 2000) + OFFSET_sBx);
+  }
+}
+
+/*
+** 发射状态转移指令
+** @param ctx 上下文
+** @param reg 状态寄存器
+** @param next_state 下一个状态值
+** @return 发射的指令数量
+*/
+static int emitStateTransition (CFFContext *ctx, int reg, int next_state) {
+  if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
+    /* 更加复杂的转换：使用加法混淆 */
+    NEXT_RAND(ctx->seed);
+    int delta = (ctx->seed % 100) - 50; /* -50 ~ 49 */
+    if (emitInstruction(ctx, CREATE_ABx(OP_LOADI, reg, (next_state - delta) + OFFSET_sBx)) < 0) return -1;
+    if (emitInstruction(ctx, CREATE_ABCk(OP_ADDI, reg, reg, int2sC(delta), 0)) < 0) return -1;
+    return 2;
+  } else {
+    if (emitInstruction(ctx, CREATE_ABx(OP_LOADI, reg, next_state + OFFSET_sBx)) < 0) return -1;
+    return 1;
   }
 }
 
 
-/*
-** 生成一个虚假基本块的代码
-** @param ctx 上下文
-** @param bogus_state 虚假块的状态ID
-** @param seed 随机种子指针
-** @return 成功返回0，失败返回-1
-**
-** 虚假块结构：
-** - 3~8条随机的算术/移动指令
-** - 设置状态为另一个随机虚假状态或跳回分发器
-** - JMP 回分发器
-*/
+/* 生成一个虚假基本块的代码 */
 static int emitBogusBlock (CFFContext *ctx, int bogus_state, unsigned int *seed) {
   int state_reg = ctx->state_reg;
-  
-  /* 决定虚假块的指令数量 */
   NEXT_RAND(*seed);
   int num_insts = BOGUS_BLOCK_MIN_INSTS + (*seed % (BOGUS_BLOCK_MAX_INSTS - BOGUS_BLOCK_MIN_INSTS + 1));
-  
   CFF_LOG("  生成虚假块: state=%d, 指令数=%d", bogus_state, num_insts);
-  
-  /* 生成随机指令 */
   for (int i = 0; i < num_insts; i++) {
     Instruction bogus_inst = generateBogusInstruction(ctx, seed);
     if (emitInstruction(ctx, bogus_inst) < 0) return -1;
   }
-  
-  /* 生成下一个状态（指向另一个虚假块或回到分发器循环） */
   NEXT_RAND(*seed);
-  int next_state = bogus_state + 1 + (*seed % 3);  /* 指向附近的状态 */
-  
+  int next_state = bogus_state + 1 + (*seed % 3);
   if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
     next_state = luaO_encodeState(next_state, ctx->seed);
   }
-  
-  /* LOADI state_reg, next_state */
-  Instruction state_inst = CREATE_ABx(OP_LOADI, state_reg, next_state + OFFSET_sBx);
-  if (emitInstruction(ctx, state_inst) < 0) return -1;
-  
-  /* JMP back to dispatcher */
+  if (emitStateTransition(ctx, state_reg, next_state) < 0) return -1;
   int jmp_offset = ctx->dispatcher_pc - ctx->new_code_size - 1;
   Instruction jmp_inst = CREATE_sJ(OP_JMP, jmp_offset + OFFSET_sJ, 0);
   if (emitInstruction(ctx, jmp_inst) < 0) return -1;
+  return 0;
+}
+
+/* 复制基本块并生成状态转移逻辑（公共代码） */
+static int luaO_emitBlocksAndStubs (CFFContext *ctx, int *all_block_jmp_pcs, int *all_block_starts, 
+                                     int num_bogus_blocks, unsigned int *bogus_seed) {
+  Proto *f = ctx->f;
+  int state_reg = ctx->state_reg;
+  
+  CFF_LOG("--- 复制基本块代码并生成存根 ---");
+  
+  for (int i = 0; i < ctx->num_blocks; i++) {
+    BasicBlock *block = &ctx->blocks[i];
+    all_block_starts[i] = ctx->new_code_size;
+    
+    CFF_LOG("块 %d: 原始PC [%d, %d), 新起始PC=%d", i, block->start_pc, block->end_pc, all_block_starts[i]);
+    
+    int last_pc = block->end_pc - 1;
+    OpCode last_op = (last_pc >= block->start_pc) ? GET_OPCODE(f->code[last_pc]) : OP_NOP;
+    
+    /* 处理条件测试模式 */
+    int has_cond_test = 0;
+    int cond_test_pc = -1;
+    if (last_op == OP_JMP && last_pc > block->start_pc) {
+      OpCode prev_op = GET_OPCODE(f->code[last_pc - 1]);
+      if (isConditionalTest(prev_op)) {
+        has_cond_test = 1;
+        cond_test_pc = last_pc - 1;
+      }
+    }
+    
+    /* 后置条件循环：发射存根在前，以便 backward jump 能够到达 */
+    int loop_stub_pc = -1;
+    if (last_op == OP_FORLOOP || last_op == OP_TFORLOOP) {
+      int state_body = ctx->blocks[block->original_target].state_id;
+      if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) state_body = luaO_encodeState(state_body, ctx->seed);
+      
+      int skip_stub_pc = emitInstruction(ctx, CREATE_sJ(OP_JMP, 0, 0)); /* 跳过存根 */
+      loop_stub_pc = ctx->new_code_size;
+      emitStateTransition(ctx, state_reg, state_body);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      SETARG_sJ(ctx->new_code[skip_stub_pc], ctx->new_code_size - skip_stub_pc - 1);
+    }
+    
+    /* 确定复制范围 */
+    int copy_end = block->end_pc;
+    if (has_cond_test) copy_end = cond_test_pc;
+    else if (luaO_isJumpInstruction(last_op)) copy_end = last_pc;
+    
+    /* 复制指令 */
+    for (int pc = block->start_pc; pc < copy_end; pc++) {
+      if (ctx->skip_pc0 && pc == 0) {
+        CFF_LOG("  跳过 PC 0 (已作为函数序言发射)");
+        continue;
+      }
+      if (emitInstruction(ctx, f->code[pc]) < 0) return -1;
+    }
+    
+    /* 处理块出口 */
+    if (block->is_exit) {
+      /* 出口块：复制返回指令 */
+      for (int pc = copy_end; pc < block->end_pc; pc++) {
+        if (emitInstruction(ctx, f->code[pc]) < 0) return -1;
+      }
+    } else if (has_cond_test) {
+      /* 条件分支存根 */
+      Instruction cond_inst = f->code[cond_test_pc];
+      if (emitInstruction(ctx, cond_inst) < 0) return -1;
+      
+      int target_then = findBlockStartingAt(ctx, last_pc + 1);
+      if (target_then < 0) target_then = block->fall_through;
+      int target_else = findBlockStartingAt(ctx, luaO_getJumpTarget(f->code[last_pc], last_pc));
+      
+      int state_then = ctx->blocks[target_then].state_id;
+      int state_else = ctx->blocks[target_else].state_id;
+      if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
+        state_then = luaO_encodeState(state_then, ctx->seed);
+        state_else = luaO_encodeState(state_else, ctx->seed);
+      }
+      
+      int skip_then_pc = emitInstruction(ctx, CREATE_sJ(OP_JMP, 0, 0)); /* 跳过 then 分支 */
+      emitStateTransition(ctx, state_reg, state_then);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      SETARG_sJ(ctx->new_code[skip_then_pc], ctx->new_code_size - skip_then_pc - 1);
+      
+      emitStateTransition(ctx, state_reg, state_else);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      
+    } else if (last_op == OP_FORLOOP || last_op == OP_TFORLOOP) {
+      Instruction loop_inst = f->code[last_pc];
+      int state_next = ctx->blocks[block->fall_through].state_id;
+      if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) state_next = luaO_encodeState(state_next, ctx->seed);
+      
+      /* 计算跳转到 loop_stub_pc 的偏移量 */
+      int current_pc = ctx->new_code_size;
+      int bx = (current_pc + 1) - loop_stub_pc;
+      SETARG_Bx(loop_inst, bx);
+      emitInstruction(ctx, loop_inst);
+      
+      emitStateTransition(ctx, state_reg, state_next);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      
+    } else if (last_op == OP_TFORPREP) {
+      int a = GETARG_A(f->code[last_pc]);
+      int state_call = ctx->blocks[block->original_target].state_id;
+      if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) state_call = luaO_encodeState(state_call, ctx->seed);
+      emitInstruction(ctx, CREATE_ABCk(OP_TBC, a + 3, 0, 0, 0));
+      emitStateTransition(ctx, state_reg, state_call);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+
+    } else if (last_op == OP_FORPREP) {
+      Instruction prep_inst = f->code[last_pc];
+      int state_enter = ctx->blocks[block->fall_through].state_id;
+      int state_skip = ctx->blocks[block->original_target].state_id;
+      if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
+        state_enter = luaO_encodeState(state_enter, ctx->seed);
+        state_skip = luaO_encodeState(state_skip, ctx->seed);
+      }
+      int prep_pc = ctx->new_code_size;
+      emitInstruction(ctx, prep_inst);
+      emitStateTransition(ctx, state_reg, state_enter);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      
+      int skip_jump_pc = emitInstruction(ctx, CREATE_sJ(OP_JMP, 0, 0));
+      int skip_stub_start = ctx->new_code_size;
+      emitStateTransition(ctx, state_reg, state_skip);
+      emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      
+      SETARG_sJ(ctx->new_code[skip_jump_pc], ctx->new_code_size - skip_jump_pc - 1);
+      SETARG_Bx(ctx->new_code[prep_pc], skip_stub_start - prep_pc - 1);
+      
+    } else {
+      int next_block = (block->original_target >= 0) ? block->original_target : block->fall_through;
+      if (next_block >= 0) {
+        int next_state = ctx->blocks[next_block].state_id;
+        if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) next_state = luaO_encodeState(next_state, ctx->seed);
+        emitStateTransition(ctx, state_reg, next_state);
+        emitInstruction(ctx, CREATE_sJ(OP_JMP, (ctx->dispatcher_pc - ctx->new_code_size - 1) + OFFSET_sJ, 0));
+      }
+    }
+  }
+  
+  /* 生成虚假块 */
+  for (int i = 0; i < num_bogus_blocks; i++) {
+    all_block_starts[ctx->num_blocks + i] = ctx->new_code_size;
+    if (emitBogusBlock(ctx, ctx->num_blocks + i, bogus_seed) < 0) return -1;
+  }
   
   return 0;
 }
+
+/* 生成二分查找分发器 */
+int luaO_generateBinaryDispatcher (CFFContext *ctx) {
+  if (ctx->num_blocks == 0) return 0;
+  int state_reg = ctx->state_reg;
+  unsigned int bogus_seed = ctx->seed;
+  CFF_LOG("========== 开始生成二分查找分发器 ==========");
+
+  /* 稳定性保障：确保 VARARGPREP 始终作为第一条指令执行 */
+  if (GET_OPCODE(ctx->f->code[0]) == OP_VARARGPREP) {
+    CFF_LOG("检测到 VARARGPREP，将其保留在 PC 0");
+    emitInstruction(ctx, ctx->f->code[0]);
+    ctx->skip_pc0 = 1;
+  }
+  
+  int num_bogus_blocks = (ctx->obfuscate_flags & OBFUSCATE_BOGUS_BLOCKS) ? ctx->num_blocks * BOGUS_BLOCK_RATIO : 0;
+  int total_blocks = ctx->num_blocks + num_bogus_blocks;
+  
+  /* 查找入口状态 */
+  int entry_block = 0;
+  for (int i = 0; i < ctx->num_blocks; i++) {
+    if (ctx->blocks[i].is_entry) {
+      entry_block = i;
+      break;
+    }
+  }
+  int entry_state = ctx->blocks[entry_block].state_id;
+  if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) entry_state = luaO_encodeState(entry_state, ctx->seed);
+  emitStateTransition(ctx, state_reg, entry_state);
+  
+  ctx->dispatcher_pc = ctx->new_code_size;
+  
+  StateBlock *sb = (StateBlock *)luaM_malloc_(ctx->L, sizeof(StateBlock) * total_blocks, 0);
+  if (sb == NULL) return -1;
+  
+  for (int i = 0; i < ctx->num_blocks; i++) {
+    int s = ctx->blocks[i].state_id;
+    if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) s = luaO_encodeState(s, ctx->seed);
+    sb[i].state = s; sb[i].block_idx = i;
+  }
+  for (int i = 0; i < num_bogus_blocks; i++) {
+    int s = ctx->num_blocks + i;
+    if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) s = luaO_encodeState(s, ctx->seed);
+    sb[ctx->num_blocks + i].state = s; sb[ctx->num_blocks + i].block_idx = ctx->num_blocks + i;
+  }
+  qsort(sb, total_blocks, sizeof(StateBlock), compareStateBlocks);
+  
+  int *all_block_jmp_pcs = (int *)luaM_malloc_(ctx->L, sizeof(int) * total_blocks, 0);
+  if (all_block_jmp_pcs == NULL) {
+    luaM_free_(ctx->L, sb, sizeof(StateBlock) * total_blocks);
+    return -1;
+  }
+  
+  if (emitBinarySearch(ctx, sb, 0, total_blocks - 1, all_block_jmp_pcs) < 0) {
+    luaM_free_(ctx->L, sb, sizeof(StateBlock) * total_blocks);
+    luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
+    return -1;
+  }
+  luaM_free_(ctx->L, sb, sizeof(StateBlock) * total_blocks);
+  
+  emitInstruction(ctx, CREATE_sJ(OP_JMP, ctx->dispatcher_pc - ctx->new_code_size - 1 + OFFSET_sJ, 0));
+  
+  int *all_block_starts = (int *)luaM_malloc_(ctx->L, sizeof(int) * total_blocks, 0);
+  if (all_block_starts == NULL) {
+    luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
+    return -1;
+  }
+  
+  if (luaO_emitBlocksAndStubs(ctx, all_block_jmp_pcs, all_block_starts, num_bogus_blocks, &bogus_seed) != 0) {
+    luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
+    luaM_free_(ctx->L, all_block_starts, sizeof(int) * total_blocks);
+    return -1;
+  }
+  
+  /* 修正分发器跳转 */
+  for (int i = 0; i < total_blocks; i++) {
+    SETARG_sJ(ctx->new_code[all_block_jmp_pcs[i]], all_block_starts[i] - all_block_jmp_pcs[i] - 1);
+  }
+  
+  luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
+  luaM_free_(ctx->L, all_block_starts, sizeof(int) * total_blocks);
+  return 0;
+}
+
+
 
 
 /*
@@ -812,6 +1178,13 @@ int luaO_generateDispatcher (CFFContext *ctx) {
   
   CFF_LOG("========== 开始生成扁平化代码 ==========");
   CFF_LOG("状态寄存器: R[%d]", state_reg);
+
+  /* 稳定性保障：确保 VARARGPREP 始终作为第一条指令执行 */
+  if (GET_OPCODE(ctx->f->code[0]) == OP_VARARGPREP) {
+    CFF_LOG("检测到 VARARGPREP，将其保留在 PC 0");
+    emitInstruction(ctx, ctx->f->code[0]);
+    ctx->skip_pc0 = 1;
+  }
   
   /* 计算虚假块数量 */
   int num_bogus_blocks = 0;
@@ -840,8 +1213,7 @@ int luaO_generateDispatcher (CFFContext *ctx) {
   
   /* LOADI state_reg, entry_state */
   CFF_LOG("生成初始化指令: LOADI R[%d], %d", state_reg, entry_state);
-  Instruction init_inst = CREATE_ABx(OP_LOADI, state_reg, entry_state + OFFSET_sBx);
-  if (emitInstruction(ctx, init_inst) < 0) return -1;
+  if (emitStateTransition(ctx, state_reg, entry_state) < 0) return -1;
   
   /* 如果启用函数交织，初始化函数ID寄存器 */
   int func_id_reg = ctx->func_id_reg;
@@ -861,19 +1233,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
   int *all_block_jmp_pcs = (int *)luaM_malloc_(ctx->L, sizeof(int) * total_blocks, 0);
   if (all_block_jmp_pcs == NULL) return -1;
   
-  /* 为虚假块生成状态ID（从 num_blocks 开始） */
-  int *bogus_states = NULL;
-  if (num_bogus_blocks > 0) {
-    bogus_states = (int *)luaM_malloc_(ctx->L, sizeof(int) * num_bogus_blocks, 0);
-    if (bogus_states == NULL) {
-      luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-      return -1;
-    }
-    for (int i = 0; i < num_bogus_blocks; i++) {
-      bogus_states[i] = ctx->num_blocks + i;
-    }
-  }
-  
   /* 生成状态比较代码 - 真实块 */
   CFF_LOG("--- 生成状态比较代码（真实块）---");
   int opaque_counter = 0;
@@ -888,7 +1247,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
       /* 生成恒真谓词 */
       if (luaO_emitOpaquePredicate(ctx, OP_ALWAYS_TRUE, &opaque_seed) < 0) {
         luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-        if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
         return -1;
       }
       
@@ -898,7 +1256,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
       Instruction skip_dead = CREATE_sJ(OP_JMP, dead_code_size + OFFSET_sJ, 0);
       if (emitInstruction(ctx, skip_dead) < 0) {
         luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-        if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
         return -1;
       }
       
@@ -907,7 +1264,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
         Instruction dead = generateBogusInstruction(ctx, &opaque_seed);
         if (emitInstruction(ctx, dead) < 0) {
           luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-          if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
           return -1;
         }
       }
@@ -925,7 +1281,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
     Instruction cmp_inst = CREATE_ABCk(OP_EQI, state_reg, int2sC(state), 0, 1);
     if (emitInstruction(ctx, cmp_inst) < 0) {
       luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-      if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
       return -1;
     }
     
@@ -934,17 +1289,25 @@ int luaO_generateDispatcher (CFFContext *ctx) {
     int jmp_pc = emitInstruction(ctx, jmp_inst);
     if (jmp_pc < 0) {
       luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-      if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
       return -1;
     }
     all_block_jmp_pcs[i] = jmp_pc;
+
+    /* 混淆：在此处插入 NOP 是安全的 */
+    if (ctx->obfuscate_flags & OBFUSCATE_RANDOM_NOP) {
+      int num_nops = 1 + (ctx->seed % 2);
+      for (int k = 0; k < num_nops; k++) {
+        NEXT_RAND(ctx->seed);
+        emitInstruction(ctx, luaO_createNOP(ctx->seed));
+      }
+    }
   }
   
   /* 生成状态比较代码 - 虚假块 */
   if (num_bogus_blocks > 0) {
     CFF_LOG("--- 生成状态比较代码（虚假块）---");
     for (int i = 0; i < num_bogus_blocks; i++) {
-      int state = bogus_states[i];
+      int state = ctx->num_blocks + i;
       
       if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
         state = luaO_encodeState(state, ctx->seed);
@@ -955,7 +1318,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
       Instruction cmp_inst = CREATE_ABCk(OP_EQI, state_reg, int2sC(state), 0, 1);
       if (emitInstruction(ctx, cmp_inst) < 0) {
         luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-        luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
         return -1;
       }
       
@@ -964,10 +1326,18 @@ int luaO_generateDispatcher (CFFContext *ctx) {
       int jmp_pc = emitInstruction(ctx, jmp_inst);
       if (jmp_pc < 0) {
         luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-        luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
         return -1;
       }
       all_block_jmp_pcs[ctx->num_blocks + i] = jmp_pc;
+
+      /* 混淆：在此处插入 NOP 是安全的 */
+      if (ctx->obfuscate_flags & OBFUSCATE_RANDOM_NOP) {
+        int num_nops = 1 + (ctx->seed % 2);
+        for (int k = 0; k < num_nops; k++) {
+          NEXT_RAND(ctx->seed);
+          emitInstruction(ctx, luaO_createNOP(ctx->seed));
+        }
+      }
     }
   }
   
@@ -977,7 +1347,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
     fake_func_jmp_pcs = (int *)luaM_malloc_(ctx->L, sizeof(int) * ctx->num_fake_funcs, 0);
     if (fake_func_jmp_pcs == NULL) {
       luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-      if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
       return -1;
     }
     
@@ -987,7 +1356,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
       if (emitFakeFunction(ctx, f, &fake_seed, &fake_func_jmp_pcs[f]) < 0) {
         luaM_free_(ctx->L, fake_func_jmp_pcs, sizeof(int) * ctx->num_fake_funcs);
         luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-        if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
         return -1;
       }
     }
@@ -998,7 +1366,6 @@ int luaO_generateDispatcher (CFFContext *ctx) {
   Instruction loop_jmp = CREATE_sJ(OP_JMP, ctx->dispatcher_pc - dispatcher_end - 1 + OFFSET_sJ, 0);
   if (emitInstruction(ctx, loop_jmp) < 0) {
     luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-    if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
     return -1;
   }
   
@@ -1006,228 +1373,14 @@ int luaO_generateDispatcher (CFFContext *ctx) {
   int *all_block_starts = (int *)luaM_malloc_(ctx->L, sizeof(int) * total_blocks, 0);
   if (all_block_starts == NULL) {
     luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
-    if (bogus_states) luaM_free_(ctx->L, bogus_states, sizeof(int) * num_bogus_blocks);
     return -1;
   }
   
-  /* 复制原始基本块代码，并记录新的起始位置 */
-  CFF_LOG("--- 复制基本块代码 ---");
-  Proto *f = ctx->f;
-  
-  for (int i = 0; i < ctx->num_blocks; i++) {
-    BasicBlock *block = &ctx->blocks[i];
-    all_block_starts[i] = ctx->new_code_size;
-    
-    CFF_LOG("块 %d: 原始PC [%d, %d), 新起始PC=%d, state_id=%d", 
-            i, block->start_pc, block->end_pc, all_block_starts[i], block->state_id);
-    
-    /* 分析基本块的最后指令 */
-    int last_pc = block->end_pc - 1;
-    OpCode last_op = OP_NOP;  /* 空操作码作为默认值 */
-    int has_cond_test = 0;
-    int cond_test_pc = -1;
-    
-    if (last_pc >= block->start_pc) {
-      last_op = GET_OPCODE(f->code[last_pc]);
-      
-      /* 检查是否有条件测试+JMP模式 */
-      /* 条件测试指令在倒数第二条，JMP在最后一条 */
-      if (last_op == OP_JMP && last_pc > block->start_pc) {
-        OpCode prev_op = GET_OPCODE(f->code[last_pc - 1]);
-        if (isConditionalTest(prev_op)) {
-          has_cond_test = 1;
-          cond_test_pc = last_pc - 1;
-          CFF_LOG("  检测到条件测试+JMP模式: %s @ PC=%d, JMP @ PC=%d", 
-                  getOpName(prev_op), cond_test_pc, last_pc);
-        }
-      }
-    }
-    
-    /* 复制基本块的指令 */
-    int copy_end = block->end_pc;
-    
-    if (has_cond_test) {
-      /* 条件分支块：复制到条件测试指令之前（不含） */
-      copy_end = cond_test_pc;
-    } else if (last_op == OP_JMP) {
-      /* 无条件跳转块：不复制最后的JMP */
-      copy_end = block->end_pc - 1;
-    }
-    /* 其他情况（包括返回指令）：复制全部 */
-    
-    /* 复制指令 */
-    for (int pc = block->start_pc; pc < copy_end; pc++) {
-      if (emitInstruction(ctx, f->code[pc]) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-    }
-    
-    /* 处理基本块的出口 */
-    if (block->is_exit) {
-      /* 出口块：复制返回指令（如果还没复制） */
-      if (copy_end < block->end_pc) {
-        for (int pc = copy_end; pc < block->end_pc; pc++) {
-          if (emitInstruction(ctx, f->code[pc]) < 0) {
-            luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-            luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-            return -1;
-          }
-        }
-      }
-    } else if (has_cond_test) {
-      /* 条件分支块：需要生成两个分支的状态转换 */
-      
-      /* 复制条件测试指令 */
-      Instruction cond_inst = f->code[cond_test_pc];
-      OpCode cond_op = GET_OPCODE(cond_inst);
-      int cond_k = getarg(cond_inst, POS_k, 1);
-      CFF_LOG("  复制条件测试: %s (k=%d) @ 新PC=%d", getOpName(cond_op), cond_k, ctx->new_code_size);
-      if (emitInstruction(ctx, cond_inst) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-      
-      /* 
-      ** Lua条件测试指令的语义：if (cond ~= k) then pc++
-      ** 当k=0时：条件为真则跳过下一条指令
-      ** 
-      ** 原始代码结构：
-      **   [条件测试]  ; 条件为真时跳过JMP
-      **   JMP else    ; 条件为假时跳到else
-      **   ; then分支
-      **   ...
-      **   ; else分支
-      **   ...
-      **
-      ** 生成的CFF代码结构：
-      **   [条件测试]  ; 条件为真时跳过下一条JMP
-      **   JMP +2      ; 条件为假时跳过then分支的状态设置
-      **   LOADI state_reg, then_state  ; then分支（条件为真时执行）
-      **   JMP dispatcher
-      **   LOADI state_reg, else_state  ; else分支（条件为假时执行）
-      **   JMP dispatcher
-      */
-      
-      /* 获取JMP指令的原始目标（else分支） */
-      Instruction orig_jmp = f->code[last_pc];
-      int orig_jmp_offset = GETARG_sJ(orig_jmp);
-      int orig_jmp_target = luaO_getJumpTarget(orig_jmp, last_pc);
-      int else_block = findBlockStartingAt(ctx, orig_jmp_target);
-      
-      /* then分支是JMP后面的代码块 */
-      int then_block = findBlockStartingAt(ctx, last_pc + 1);
-      if (then_block < 0) then_block = block->fall_through;
-      
-      CFF_LOG("  原始JMP: offset=%d, 目标PC=%d", orig_jmp_offset, orig_jmp_target);
-      CFF_LOG("  then分支: 块%d (PC=%d后的代码)", then_block, last_pc);
-      CFF_LOG("  else分支: 块%d (JMP目标)", else_block);
-      
-      int then_state = then_block >= 0 ? ctx->blocks[then_block].state_id : 0;
-      int else_state = else_block >= 0 ? ctx->blocks[else_block].state_id : 0;
-      
-      CFF_LOG("  then_state=%d, else_state=%d", then_state, else_state);
-      
-      if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
-        then_state = luaO_encodeState(then_state, ctx->seed);
-        else_state = luaO_encodeState(else_state, ctx->seed);
-      }
-      
-      /* 生成：JMP +2 (条件为假时跳过then分支的状态设置，跳到else分支) */
-      /* 
-      ** 代码结构：
-      ** [当前PC]   JMP +2      <- 我们在这里
-      ** [当前PC+1] LOADI then  <- 跳过这条
-      ** [当前PC+2] JMP disp    <- 跳过这条
-      ** [当前PC+3] LOADI else  <- 跳到这里 (当前PC + 1 + 2 = 当前PC + 3)
-      */
-      CFF_LOG("  生成: JMP +2 (跳过then状态设置) @ 新PC=%d", ctx->new_code_size);
-      Instruction skip_then = CREATE_sJ(OP_JMP, 2 + OFFSET_sJ, 0);
-      if (emitInstruction(ctx, skip_then) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-      
-      /* then分支的状态设置（条件为真时执行） */
-      CFF_LOG("  生成: LOADI R[%d], %d (then状态) @ 新PC=%d", state_reg, then_state, ctx->new_code_size);
-      Instruction then_state_inst = CREATE_ABx(OP_LOADI, state_reg, then_state + OFFSET_sBx);
-      if (emitInstruction(ctx, then_state_inst) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-      
-      /* 跳转到dispatcher */
-      int jmp_offset1 = ctx->dispatcher_pc - ctx->new_code_size - 1;
-      CFF_LOG("  生成: JMP dispatcher (offset=%d) @ 新PC=%d", jmp_offset1, ctx->new_code_size);
-      Instruction jmp_disp1 = CREATE_sJ(OP_JMP, jmp_offset1 + OFFSET_sJ, 0);
-      if (emitInstruction(ctx, jmp_disp1) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-      
-      /* else分支的状态设置（条件为假时执行） */
-      CFF_LOG("  生成: LOADI R[%d], %d (else状态) @ 新PC=%d", state_reg, else_state, ctx->new_code_size);
-      Instruction else_state_inst = CREATE_ABx(OP_LOADI, state_reg, else_state + OFFSET_sBx);
-      if (emitInstruction(ctx, else_state_inst) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-      
-      /* 跳转到dispatcher */
-      int jmp_offset2 = ctx->dispatcher_pc - ctx->new_code_size - 1;
-      CFF_LOG("  生成: JMP dispatcher (offset=%d) @ 新PC=%d", jmp_offset2, ctx->new_code_size);
-      Instruction jmp_disp2 = CREATE_sJ(OP_JMP, jmp_offset2 + OFFSET_sJ, 0);
-      if (emitInstruction(ctx, jmp_disp2) < 0) {
-        luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-        luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-        return -1;
-      }
-      
-    } else {
-      /* 普通块：无条件跳转或顺序执行 */
-      int next_state = -1;
-      
-      if (block->original_target >= 0) {
-        next_state = ctx->blocks[block->original_target].state_id;
-        CFF_LOG("  普通块: 跳转到块%d (state=%d)", block->original_target, next_state);
-      } else if (block->fall_through >= 0) {
-        next_state = ctx->blocks[block->fall_through].state_id;
-        CFF_LOG("  普通块: 顺序执行到块%d (state=%d)", block->fall_through, next_state);
-      }
-      
-      if (next_state >= 0) {
-        if (ctx->obfuscate_flags & OBFUSCATE_STATE_ENCODE) {
-          next_state = luaO_encodeState(next_state, ctx->seed);
-        }
-        
-        /* LOADI state_reg, next_state */
-        CFF_LOG("  生成: LOADI R[%d], %d @ 新PC=%d", state_reg, next_state, ctx->new_code_size);
-        Instruction state_inst = CREATE_ABx(OP_LOADI, state_reg, next_state + OFFSET_sBx);
-        if (emitInstruction(ctx, state_inst) < 0) {
-          luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-          luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-          return -1;
-        }
-        
-        /* JMP dispatcher */
-        int jmp_offset = ctx->dispatcher_pc - ctx->new_code_size - 1;
-        CFF_LOG("  生成: JMP dispatcher (offset=%d) @ 新PC=%d", jmp_offset, ctx->new_code_size);
-        Instruction jmp_inst = CREATE_sJ(OP_JMP, jmp_offset + OFFSET_sJ, 0);
-        if (emitInstruction(ctx, jmp_inst) < 0) {
-          luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * ctx->num_blocks);
-          luaM_free_(ctx->L, all_block_starts, sizeof(int) * ctx->num_blocks);
-          return -1;
-        }
-      } else {
-        CFF_LOG("  普通块: 无后继块（可能是出口块）");
-      }
-    }
+  /* 复制基本块并生成状态转移 */
+  if (luaO_emitBlocksAndStubs(ctx, all_block_jmp_pcs, all_block_starts, num_bogus_blocks, &bogus_seed) != 0) {
+    luaM_free_(ctx->L, all_block_jmp_pcs, sizeof(int) * total_blocks);
+    luaM_free_(ctx->L, all_block_starts, sizeof(int) * total_blocks);
+    return -1;
   }
   
   /* 修正dispatcher中的跳转偏移量 */
@@ -1327,24 +1480,6 @@ int luaO_flatten (lua_State *L, Proto *f, int flags, unsigned int seed,
     return 0;
   }
   
-  /* 检查是否包含不支持的指令（循环指令） */
-  /* 当前简化实现不支持循环指令的扁平化 */
-  for (int pc = 0; pc < f->sizecode; pc++) {
-    OpCode op = GET_OPCODE(f->code[pc]);
-    switch (op) {
-      case OP_FORLOOP:
-      case OP_FORPREP:
-      case OP_TFORPREP:
-      case OP_TFORLOOP:
-      case OP_TFORCALL:
-        /* 包含循环指令，跳过扁平化 */
-        CFF_LOG("检测到循环指令 %s @ PC=%d，跳过扁平化", getOpName(op), pc);
-        if (log_file != NULL) { fclose(log_file); g_cff_log_file = NULL; }
-        return 0;
-      default:
-        break;
-    }
-  }
   
   /* 初始化上下文 */
   CFFContext *ctx = initContext(L, f, flags, seed);
@@ -1376,7 +1511,10 @@ int luaO_flatten (lua_State *L, Proto *f, int flags, unsigned int seed,
   
   /* 生成扁平化代码 */
   int gen_result;
-  if (flags & OBFUSCATE_NESTED_DISPATCHER) {
+  if (flags & OBFUSCATE_BINARY_DISPATCHER) {
+    CFF_LOG("使用二分查找分发器模式");
+    gen_result = luaO_generateBinaryDispatcher(ctx);
+  } else if (flags & OBFUSCATE_NESTED_DISPATCHER) {
     CFF_LOG("使用嵌套分发器模式");
     gen_result = luaO_generateNestedDispatcher(ctx);
   } else {
@@ -1477,28 +1615,25 @@ int luaO_flatten (lua_State *L, Proto *f, int flags, unsigned int seed,
 ** 这个函数主要用于调试或需要恢复原始控制流的场景。
 */
 int luaO_unflatten (lua_State *L, Proto *f, CFFMetadata *metadata) {
-  /* 检查是否已扁平化 */
-  if (!(f->difierline_mode & OBFUSCATE_CFF)) {
-    return 0;  /* 未扁平化，无需处理 */
-  }
-  
-  /* 如果没有提供元数据，从Proto中恢复 */
+  if (!(f->difierline_mode & OBFUSCATE_CFF)) return 0;
+  CFF_LOG("========== 开始反扁平化 ==========");
   if (metadata == NULL) {
     if (f->difierline_magicnum != CFF_MAGIC) {
-      return -1;  /* 无效的魔数 */
+      CFF_LOG("反扁平化失败：无效的魔数");
+      return -1;
     }
-    
-    /* 反扁平化需要保存原始代码信息，当前简化实现不支持完整恢复 */
-    /* 这里只清除扁平化标记 */
     f->difierline_mode &= ~OBFUSCATE_CFF;
+    f->difierline_mode &= ~OBFUSCATE_NESTED_DISPATCHER;
+    f->difierline_mode &= ~OBFUSCATE_OPAQUE_PREDICATES;
+    f->difierline_mode &= ~OBFUSCATE_FUNC_INTERLEAVE;
+    CFF_LOG("已清除扁平化标志（仅标记清除）");
     return 0;
   }
-  
-  /* 使用提供的元数据进行反扁平化 */
-  /* TODO: 实现完整的反扁平化逻辑 */
+  if (metadata->enabled) {
+    CFF_LOG("使用元数据进行反扁平化: num_blocks=%d", metadata->num_blocks);
+    f->difierline_mode &= ~OBFUSCATE_CFF;
+  }
   (void)L;
-  (void)metadata;
-  
   return 0;
 }
 
@@ -2057,9 +2192,8 @@ Instruction luaO_createNOP (unsigned int seed) {
 
 /*
 ** 不透明谓词变体数量
-** 每种类型有多个数学等价的实现方式
 */
-#define NUM_OPAQUE_VARIANTS  4
+#define NUM_OPAQUE_VARIANTS  10
 
 
 /*
@@ -2069,10 +2203,16 @@ Instruction luaO_createNOP (unsigned int seed) {
 ** @return 成功返回0，失败返回-1
 **
 ** 恒真谓词示例：
-** 1. x*(x+1) % 2 == 0  (连续整数乘积必为偶数)
-** 2. x*x >= 0          (平方数非负)
-** 3. (x | 1) != 0      (任何数或1都不为0)
-** 4. (x & -x) <= x     (取最低位不会超过原值，x>=0时)
+** 1. x*x >= 0          (平方数非负)
+** 2. x + 0 == x        (加0恒等)
+** 3. 2*x - x == x      (乘2减x恒等)
+** 4. x - x == 0        (自减恒为0)
+** 5. (x | 1) != 0      (任何数或1都不为0)
+** 6. (x ^ x) == 0      (自异或恒为0)
+** 7. (x & 0) == 0
+** 8. (x | 0) == x
+** 9. (x & x) == x
+** 10. (x | -1) == -1
 **
 ** 生成的字节码结构：
 **   LOADI reg1, random_value      ; 加载一个随机值
@@ -2148,7 +2288,7 @@ static int emitAlwaysTruePredicate (CFFContext *ctx, unsigned int *seed) {
       break;
     }
     
-    default: {
+    case 3: {
       /* x - x == 0 (恒等式) */
       /* LOADI reg1, random_val */
       Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
@@ -2160,6 +2300,84 @@ static int emitAlwaysTruePredicate (CFFContext *ctx, unsigned int *seed) {
       
       /* EQI reg2, 0, k=0 (reg2 == 0 ? 恒真) */
       Instruction cmp = CREATE_ABCk(OP_EQI, reg2, int2sC(0), 0, 0);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    
+    case 4: {
+      /* (x | 1) != 0 (恒真) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      
+      /* BORI reg2, reg1, 1 */
+      Instruction bor = CREATE_ABCk(OP_BORK, reg2, reg1, int2sC(1), 0);
+      /* Wait, OP_BORK is BORK A B C where K[C] is integer. 
+      ** We should use LOADI for 1 and then BOR.
+      */
+      Instruction load1 = CREATE_ABx(OP_LOADI, reg2, 1 + OFFSET_sBx);
+      if (emitInstruction(ctx, load1) < 0) return -1;
+      Instruction bor_inst = CREATE_ABCk(OP_BOR, reg2, reg1, reg2, 0);
+      if (emitInstruction(ctx, bor_inst) < 0) return -1;
+      
+      /* EQI reg2, 0, k=1 (reg2 != 0 ? 恒真) */
+      Instruction cmp = CREATE_ABCk(OP_EQI, reg2, int2sC(0), 0, 1);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    
+    case 5: {
+      /* (x ^ x) == 0 (恒真) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      Instruction bxor = CREATE_ABCk(OP_BXOR, reg2, reg1, reg1, 0);
+      if (emitInstruction(ctx, bxor) < 0) return -1;
+      Instruction cmp = CREATE_ABCk(OP_EQI, reg2, int2sC(0), 0, 0);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    case 6: {
+      /* (x & 0) == 0 (恒真) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      Instruction load0 = CREATE_ABx(OP_LOADI, reg2, 0 + OFFSET_sBx);
+      if (emitInstruction(ctx, load0) < 0) return -1;
+      Instruction band = CREATE_ABCk(OP_BAND, reg2, reg1, reg2, 0);
+      if (emitInstruction(ctx, band) < 0) return -1;
+      Instruction cmp = CREATE_ABCk(OP_EQI, reg2, int2sC(0), 0, 0);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    case 7: {
+      /* (x | 0) == x (恒真) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      Instruction load0 = CREATE_ABx(OP_LOADI, reg2, 0 + OFFSET_sBx);
+      if (emitInstruction(ctx, load0) < 0) return -1;
+      Instruction bor = CREATE_ABCk(OP_BOR, reg2, reg1, reg2, 0);
+      if (emitInstruction(ctx, bor) < 0) return -1;
+      Instruction cmp = CREATE_ABCk(OP_EQ, reg2, reg1, 0, 0);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    case 8: {
+      /* (x & x) == x (恒真) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      Instruction band = CREATE_ABCk(OP_BAND, reg2, reg1, reg1, 0);
+      if (emitInstruction(ctx, band) < 0) return -1;
+      Instruction cmp = CREATE_ABCk(OP_EQ, reg2, reg1, 0, 0);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    default: {
+      /* (x | -1) == -1 (恒真) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      Instruction loadm1 = CREATE_ABx(OP_LOADI, reg2, -1 + OFFSET_sBx);
+      if (emitInstruction(ctx, loadm1) < 0) return -1;
+      Instruction bor = CREATE_ABCk(OP_BOR, reg2, reg1, reg2, 0);
+      if (emitInstruction(ctx, bor) < 0) return -1;
+      Instruction cmp = CREATE_ABCk(OP_EQI, reg2, int2sC(-1), 0, 0);
       if (emitInstruction(ctx, cmp) < 0) return -1;
       break;
     }
@@ -2185,7 +2403,7 @@ static int emitAlwaysFalsePredicate (CFFContext *ctx, unsigned int *seed) {
   int reg2 = ctx->opaque_reg2;
   
   NEXT_RAND(*seed);
-  int variant = *seed % 3;
+  int variant = *seed % 5;
   
   NEXT_RAND(*seed);
   int random_val = (*seed % 1000) - 500;
@@ -2223,7 +2441,7 @@ static int emitAlwaysFalsePredicate (CFFContext *ctx, unsigned int *seed) {
       break;
     }
     
-    default: {
+    case 2: {
       /* x + 1 == x (恒假，除非溢出) */
       Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
       if (emitInstruction(ctx, load) < 0) return -1;
@@ -2233,6 +2451,33 @@ static int emitAlwaysFalsePredicate (CFFContext *ctx, unsigned int *seed) {
       
       /* EQ reg2, reg1, k=0 (reg2 == reg1 ? 恒假) */
       Instruction cmp = CREATE_ABCk(OP_EQ, reg2, reg1, 0, 0);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    
+    case 3: {
+      /* x != x (恒假) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      
+      /* EQ reg1, reg1, k=1 (reg1 != reg1 ?) */
+      Instruction cmp = CREATE_ABCk(OP_EQ, reg1, reg1, 0, 1);
+      if (emitInstruction(ctx, cmp) < 0) return -1;
+      break;
+    }
+    
+    default: {
+      /* (x | 1) == 0 (恒假) */
+      Instruction load = CREATE_ABx(OP_LOADI, reg1, random_val + OFFSET_sBx);
+      if (emitInstruction(ctx, load) < 0) return -1;
+      
+      Instruction load1 = CREATE_ABx(OP_LOADI, reg2, 1 + OFFSET_sBx);
+      if (emitInstruction(ctx, load1) < 0) return -1;
+      Instruction bor_inst = CREATE_ABCk(OP_BOR, reg2, reg1, reg2, 0);
+      if (emitInstruction(ctx, bor_inst) < 0) return -1;
+      
+      /* EQI reg2, 0, k=0 (reg2 == 0 ? 恒假) */
+      Instruction cmp = CREATE_ABCk(OP_EQI, reg2, int2sC(0), 0, 0);
       if (emitInstruction(ctx, cmp) < 0) return -1;
       break;
     }
@@ -2560,38 +2805,39 @@ VMProtectContext *luaO_initVMContext (lua_State *L, Proto *f, unsigned int seed)
   
   /* 分配操作码映射表 */
   ctx->opcode_map = (int *)luaM_malloc_(L, sizeof(int) * NUM_OPCODES, 0);
-  ctx->reverse_map = (int *)luaM_malloc_(L, sizeof(int) * VM_OP_COUNT, 0);
+  ctx->reverse_map = (int *)luaM_malloc_(L, sizeof(int) * VM_MAP_SIZE, 0);  /* 修复：使用NUM_OPCODES而非VM_OP_COUNT */
   
   if (ctx->opcode_map == NULL || ctx->reverse_map == NULL) {
     if (ctx->opcode_map) luaM_free_(L, ctx->opcode_map, sizeof(int) * NUM_OPCODES);
-    if (ctx->reverse_map) luaM_free_(L, ctx->reverse_map, sizeof(int) * VM_OP_COUNT);
+    if (ctx->reverse_map) luaM_free_(L, ctx->reverse_map, sizeof(int) * VM_MAP_SIZE);
     luaM_free_(L, ctx, sizeof(VMProtectContext));
     return NULL;
   }
   
   /* 初始化映射表 */
   for (int i = 0; i < NUM_OPCODES; i++) {
-    ctx->opcode_map[i] = -1;  /* -1 表示未映射 */
+    ctx->opcode_map[i] = 0;  /* 默认映射到0 */
   }
-  for (int i = 0; i < VM_OP_COUNT; i++) {
-    ctx->reverse_map[i] = -1;
+  for (int i = 0; i < VM_MAP_SIZE; i++) {
+    ctx->reverse_map[i] = 0;  /* 修复：初始化为0而非-1，避免序列化时64位负数溢出 */
   }
   
-  /* 生成随机操作码映射（Lua OpCode -> VM OpCode） */
-  /* 使用简化的映射：每个Lua操作码映射到一个随机的VM操作码 */
+  /* 生成混淆的操作码映射 */
   r = seed ^ 0xDEADBEEF;
-  for (int i = 0; i < NUM_OPCODES; i++) {
-    NEXT_RAND(r);
-    ctx->opcode_map[i] = r % VM_OP_COUNT;  /* 随机映射到VM操作码范围内 */
-  }
   
-  /* 建立反向映射（可选，用于调试） */
+  int *used = (int *)luaM_malloc_(L, sizeof(int) * VM_MAP_SIZE, 0);
+  memset(used, 0, sizeof(int) * VM_MAP_SIZE);
   for (int i = 0; i < NUM_OPCODES; i++) {
-    int vm_op = ctx->opcode_map[i];
-    if (vm_op >= 0 && vm_op < VM_OP_COUNT) {
-      ctx->reverse_map[vm_op] = i;
-    }
+    int val;
+    do {
+      NEXT_RAND(r);
+      val = r % VM_MAP_SIZE;
+    } while (used[val]);
+    used[val] = 1;
+    ctx->opcode_map[i] = val;
+    ctx->reverse_map[val] = i;
   }
+  luaM_free_(L, used, sizeof(int) * VM_MAP_SIZE);
   
   CFF_LOG("VM上下文初始化完成: encrypt_key=0x%016llx", (unsigned long long)ctx->encrypt_key);
   
@@ -2617,7 +2863,7 @@ void luaO_freeVMContext (VMProtectContext *ctx) {
   }
   
   if (ctx->reverse_map != NULL) {
-    luaM_free_(L, ctx->reverse_map, sizeof(int) * VM_OP_COUNT);
+    luaM_free_(L, ctx->reverse_map, sizeof(int) * VM_MAP_SIZE);  /* 修复：使用NUM_OPCODES */
   }
   
   luaM_free_(L, ctx, sizeof(VMProtectContext));
@@ -2695,7 +2941,7 @@ static VMInstruction encryptVMInstruction (VMInstruction inst, uint64_t key, int
   encrypted ^= key;
   
   /* 位旋转（基于PC的量） */
-  int rotate_amount = (pc % 64);
+  int rotate_amount = (pc & 63);
   encrypted = (encrypted << rotate_amount) | (encrypted >> (64 - rotate_amount));
   
   /* 第二轮XOR（使用修改过的密钥） */
@@ -2732,65 +2978,140 @@ static VMInstruction decryptVMInstruction (VMInstruction inst, uint64_t key, int
 
 
 /*
-** 将单条Lua指令转换为VM指令
-** @param ctx VM上下文
-** @param inst Lua指令
-** @param pc 原始PC
-** @return 成功返回0，失败返回-1
+** Try to convert a 'for' limit to an integer, preserving the semantics
+** of the loop.
 */
-static int convertLuaInstToVM (VMProtectContext *ctx, Instruction inst, int pc) {
-  OpCode lua_op = GET_OPCODE(inst);
-  
-  /* 获取映射后的VM操作码 */
-  int vm_op = ctx->opcode_map[lua_op];
-  if (vm_op < 0) {
-    /* 未映射的操作码，使用NOP */
-    vm_op = VM_OP_NOP;
-    CFF_LOG("  警告: 未映射的Lua操作码 %d @ PC=%d", lua_op, pc);
+static int forlimit (lua_State *L, lua_Integer init, const TValue *lim,
+                                   lua_Integer *p, lua_Integer step) {
+  if (!luaV_tointeger(lim, p, (step < 0 ? F2Iceil : F2Ifloor))) {
+    /* not coercible to in integer */
+    lua_Number flim;  /* try to convert to float */
+    if (!tonumber(lim, &flim)) /* cannot convert to float? */
+      luaG_forerror(L, lim, "limit");
+    /* else 'flim' is a float out of integer bounds */
+    if (luai_numlt(0, flim)) {  /* if it is positive, it is too large */
+      if (step < 0) return 1;  /* initial value must be less than it */
+      *p = LUA_MAXINTEGER;  /* truncate */
+    }
+    else {  /* it is less than min integer */
+      if (step > 0) return 1;  /* initial value must be greater than it */
+      *p = LUA_MININTEGER;  /* truncate */
+    }
   }
-  
-  /* 提取Lua指令的操作数 */
-  int a = GETARG_A(inst);
-  int b = 0, c = 0;
-  int flags = 0;
-  
-  /* 根据Lua操作码格式提取操作数 */
-  enum OpMode mode = getOpMode(lua_op);
-  switch (mode) {
-    case iABC:
-      b = GETARG_B(inst);
-      c = GETARG_C(inst);
-      flags = getarg(inst, POS_k, 1);  /* k标志位 */
-      break;
-    case iABx:
-      b = GETARG_Bx(inst);
-      break;
-    case iAsBx:
-      b = GETARG_sBx(inst);
-      break;
-    case iAx:
-      a = GETARG_Ax(inst);
-      break;
-    case isJ:
-      a = GETARG_sJ(inst);
-      break;
+  return (step > 0 ? init > *p : init < *p);  /* not to run? */
+}
+
+
+/*
+** Prepare a numerical for loop (opcode OP_FORPREP).
+*/
+static int forprep (lua_State *L, StkId ra) {
+  TValue *pinit = s2v(ra);
+  TValue *plimit = s2v(ra + 1);
+  TValue *pstep = s2v(ra + 2);
+  if (ttisinteger(pinit) && ttisinteger(pstep)) { /* integer loop? */
+    lua_Integer init = ivalue(pinit);
+    lua_Integer step = ivalue(pstep);
+    lua_Integer limit;
+    if (step == 0)
+      luaG_runerror(L, "'for' step is zero");
+    setivalue(s2v(ra + 3), init);  /* control variable */
+    if (forlimit(L, init, plimit, &limit, step))
+      return 1;  /* skip the loop */
+    else {  /* prepare loop counter */
+      lua_Unsigned count;
+      if (step > 0) {  /* ascending loop? */
+        count = l_castS2U(limit) - l_castS2U(init);
+        if (step != 1)  /* avoid division in the too common case */
+          count /= l_castS2U(step);
+      }
+      else {  /* step < 0; descending loop */
+        count = l_castS2U(init) - l_castS2U(limit);
+        /* 'step+1' avoids negating 'mininteger' */
+        count /= l_castS2U(-(step + 1)) + 1u;
+      }
+      /* store the counter in place of the limit (which won't be
+         needed anymore) */
+      setivalue(plimit, l_castU2S(count));
+    }
   }
-  
-  /* 构造VM指令 */
-  VMInstruction vm_inst = VM_MAKE_INST(vm_op, a, b, c, flags);
-  
-  /* 加密VM指令 */
-  VMInstruction encrypted = encryptVMInstruction(vm_inst, ctx->encrypt_key, pc);
-  
-  CFF_LOG("  [PC=%d] Lua %s -> VM op=%d, encrypted=0x%016llx", 
-          pc, getOpName(lua_op), vm_op, (unsigned long long)encrypted);
-  
-  /* 添加到VM代码 */
-  if (emitVMInstruction(ctx, encrypted) < 0) return -1;
-  
+  else {  /* try making all values floats */
+    lua_Number init; lua_Number limit; lua_Number step;
+    if (l_unlikely(!tonumber(plimit, &limit)))
+      luaG_forerror(L, plimit, "limit");
+    if (l_unlikely(!tonumber(pstep, &step)))
+      luaG_forerror(L, pstep, "step");
+    if (l_unlikely(!tonumber(pinit, &init)))
+      luaG_forerror(L, pinit, "initial value");
+    if (step == 0)
+      luaG_runerror(L, "'for' step is zero");
+    if (luai_numlt(0, step) ? luai_numlt(limit, init)
+                            : luai_numlt(init, limit))
+      return 1;  /* skip the loop */
+    else {
+      /* make sure internal values are all floats */
+      setfltvalue(plimit, limit);
+      setfltvalue(pstep, step);
+      setfltvalue(s2v(ra), init);  /* internal index */
+      setfltvalue(s2v(ra + 3), init);  /* control variable */
+    }
+  }
   return 0;
 }
 
+
+/*
+** Execute a step of a float numerical for loop
+*/
+static int floatforloop (lua_State *L, StkId ra) {
+  lua_Number step = fltvalue(s2v(ra + 2));
+  lua_Number limit = fltvalue(s2v(ra + 1));
+  lua_Number idx = fltvalue(s2v(ra));  /* internal index */
+  idx = luai_numadd(L, idx, step);  /* increment index */
+  if (luai_numlt(0, step) ? luai_numle(idx, limit)
+                          : luai_numle(limit, idx)) {
+    chgfltvalue(s2v(ra), idx);  /* update internal index */
+    setfltvalue(s2v(ra + 3), idx);  /* and control variable */
+    return 1;  /* jump back */
+  }
+  else
+    return 0;  /* finish the loop */
+}
+
+
+/*
+** 将单条Lua指令转换为VM指令
+*/
+static int convertLuaInstToVM (VMProtectContext *ctx, Instruction inst, int pc) {
+  OpCode lua_op = GET_OPCODE(inst);
+  int vm_op = ctx->opcode_map[lua_op];
+  int a = GETARG_A(inst);
+  uint64_t vm_inst;
+  enum OpMode mode = getOpMode(lua_op);
+  switch (mode) {
+    case iABx:
+    case iAsBx:
+      vm_inst = VM_MAKE_INST_BX(vm_op, a, (uint64_t)GETARG_Bx(inst));
+      break;
+    case iAx:
+      vm_inst = VM_MAKE_INST_BX(vm_op, 0, (uint64_t)GETARG_Ax(inst));
+      break;
+    case isJ:
+      vm_inst = VM_MAKE_INST_BX(vm_op, 0, (uint64_t)(GETARG_sJ(inst) + OFFSET_sJ));
+      break;
+    case ivABC:
+      vm_inst = VM_MAKE_INST(vm_op, a, GETARG_vB(inst), GETARG_vC(inst), GETARG_k(inst));
+      break;
+    default:
+      vm_inst = VM_MAKE_INST(vm_op, a, GETARG_B(inst), GETARG_C(inst), GETARG_k(inst));
+      break;
+  }
+  VMInstruction encrypted = encryptVMInstruction(vm_inst, ctx->encrypt_key, pc);
+  CFF_LOG("  [PC=%d] Lua %s -> VM op=%d, encrypted=0x%016llx", 
+          pc, getOpName(lua_op), vm_op, (unsigned long long)encrypted);
+  if (emitVMInstruction(ctx, encrypted) < 0) return -1;
+  return 0;
+}
 
 /*
 ** 将Lua字节码转换为VM指令
@@ -2921,13 +3242,13 @@ VMCodeTable *luaO_registerVMCode (lua_State *L, Proto *p,
   memcpy(vt->code, code, sizeof(VMInstruction) * size);
   
   /* 复制反向映射表 */
-  vt->reverse_map = (int *)luaM_malloc_(L, sizeof(int) * NUM_OPCODES, 0);
+  vt->reverse_map = (int *)luaM_malloc_(L, sizeof(int) * VM_MAP_SIZE, 0);
   if (vt->reverse_map == NULL) {
     luaM_free_(L, vt->code, sizeof(VMInstruction) * size);
     luaM_free_(L, vt, sizeof(VMCodeTable));
     return NULL;
   }
-  memcpy(vt->reverse_map, reverse_map, sizeof(int) * NUM_OPCODES);
+  memcpy(vt->reverse_map, reverse_map, sizeof(int) * VM_MAP_SIZE);
   
   /* 设置其他字段 */
   vt->proto = p;
@@ -2996,7 +3317,7 @@ void luaO_freeAllVMCode (lua_State *L) {
     
     /* 释放反向映射表 */
     if (vt->reverse_map != NULL) {
-      luaM_free_(L, vt->reverse_map, sizeof(int) * NUM_OPCODES);
+      luaM_free_(L, vt->reverse_map, sizeof(int) * VM_MAP_SIZE);
     }
     
     /* 清除 Proto 中的指针 */
@@ -3030,7 +3351,7 @@ static VMInstruction decryptVMInst (VMInstruction encrypted, uint64_t key, int p
   decrypted ^= modified_key;
   
   /* 位旋转 (逆向 - 右旋转) */
-  int rotate_amount = (pc % 64);
+  int rotate_amount = (pc & 63);
   decrypted = (decrypted >> rotate_amount) | (decrypted << (64 - rotate_amount));
   
   /* 第一轮XOR (逆向) */
@@ -3044,37 +3365,163 @@ static VMInstruction decryptVMInst (VMInstruction encrypted, uint64_t key, int p
 ** 执行VM保护的代码
 ** @param L Lua状态
 ** @param f 函数原型（包含VM代码）
-** @return 执行结果
+** @return 执行结果: 0成功, -1失败, 1表示需要回退到原生VM
 **
 ** 功能描述：
 ** 这是VM解释器的核心函数。
 ** 它读取加密的VM指令，解密并执行。
 **
-** 注意：这个函数需要与Lua运行时深度集成，
-** 完整实现需要替换lvm.c中的执行逻辑。
-** 当前实现为占位符，实际执行仍使用原始Lua VM。
+** 执行流程：
+** 1. 获取VMCodeTable
+** 2. 解密当前指令
+** 3. 映射VM操作码到Lua操作码
+** 4. 根据操作码执行相应操作
+** 5. 更新PC继续执行
 */
 int luaO_executeVM (lua_State *L, Proto *f) {
-  /* 检查是否为VM保护的函数 */
-  if (!(f->difierline_mode & OBFUSCATE_VM_PROTECT)) {
-    return 0;  /* 不是VM保护的函数，使用默认执行 */
+  if (!(f->difierline_mode & OBFUSCATE_VM_PROTECT)) return 1;
+  VMCodeTable *vm = luaO_findVMCode(L, f);
+  if (vm == NULL) return 1;
+  CallInfo *ci = L->ci;
+  LClosure *cl = clLvalue(s2v(ci->func.p));
+  TValue *k = f->k;
+  StkId base = ci->func.p + 1;
+  int pc = (int)(ci->u.l.savedpc - f->code);
+  lua_Number nb, nc;
+  while (pc < vm->size) {
+    VMInstruction decrypted = decryptVMInst(vm->code[pc], vm->encrypt_key, pc);
+    int vm_op = VM_GET_OP(decrypted), a = VM_GET_A(decrypted), b = VM_GET_B(decrypted), c = VM_GET_C(decrypted), flags = VM_GET_FLAGS(decrypted);
+    int64_t bx = VM_GET_Bx(decrypted);
+    int lua_op = vm->reverse_map[vm_op];
+    
+    if (lua_op < 0 || lua_op >= NUM_OPCODES) {
+       if (vm_op == VM_OP_HALT) return 0;
+       ci->u.l.savedpc = (const Instruction *)(f->code + pc);
+       return 1;
+    }
+    
+    switch (lua_op) {
+      case OP_MOVE: { setobjs2s(L, base + a, base + b); break; }
+      case OP_LOADI: { setivalue(s2v(base + a), (lua_Integer)(bx - OFFSET_sBx)); break; }
+      case OP_LOADK: { if (bx >= 0 && bx < f->sizek) setobj2s(L, base + a, k + bx); break; }
+      case OP_LOADF: { setfltvalue(s2v(base + a), cast_num((lua_Integer)(bx - OFFSET_sBx))); break; }
+      case OP_LOADKX: { pc++; if (pc < f->sizecode) setobj2s(L, base + a, k + GETARG_Ax(f->code[pc])); break; }
+      case OP_LOADFALSE: { setbfvalue(s2v(base + a)); break; }
+      case OP_LOADTRUE: { setbtvalue(s2v(base + a)); break; }
+      case OP_LOADNIL: { StkId ra = base + a; for (int i=0; i<=b; i++) setnilvalue(s2v(ra++)); break; }
+      case OP_GETUPVAL: { if (b < cl->nupvalues) setobj2s(L, base + a, cl->upvals[b]->v.p); break; }
+      case OP_SETUPVAL: { if (b < cl->nupvalues) { UpVal *uv = cl->upvals[b]; setobj(L, uv->v.p, s2v(base + a)); luaC_barrier(L, uv, s2v(base + a)); } break; }
+      case OP_GETTABLE: { const TValue *slot; if (luaV_fastget(L, s2v(base + b), s2v(base + c), slot, luaH_get)) { setobj2s(L, base + a, slot); } else { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishget(L, s2v(base + b), s2v(base + c), base + a, slot); return 1; } break; }
+      case OP_SETTABLE: { const TValue *slot; TValue *rc = (flags) ? k + c : s2v(base + c); if (luaV_fastget(L, s2v(base + a), s2v(base + b), slot, luaH_get)) { luaV_finishfastset(L, s2v(base + a), slot, rc); } else { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishset(L, s2v(base + a), s2v(base + b), rc, slot); return 1; } break; }
+      case OP_GETI: { const TValue *slot; if (luaV_fastgeti(L, s2v(base + b), c, slot)) { setobj2s(L, base + a, slot); } else { TValue key; setivalue(&key, c); ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishget(L, s2v(base + b), &key, base + a, slot); return 1; } break; }
+      case OP_SETI: { const TValue *slot; TValue *rc = (flags) ? k + c : s2v(base + c); if (luaV_fastgeti(L, s2v(base + a), b, slot)) { luaV_finishfastset(L, s2v(base + a), slot, rc); } else { TValue key; setivalue(&key, b); ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishset(L, s2v(base + a), &key, rc, slot); return 1; } break; }
+      case OP_GETFIELD: { const TValue *slot; TValue *rc = k + c; if (luaV_fastget(L, s2v(base + b), tsvalue(rc), slot, luaH_getshortstr)) { setobj2s(L, base + a, slot); } else { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishget(L, s2v(base + b), rc, base + a, slot); return 1; } break; }
+      case OP_SETFIELD: { const TValue *slot; TValue *rb = k + b, *rc = (flags) ? k + c : s2v(base + c); if (luaV_fastget(L, s2v(base + a), tsvalue(rb), slot, luaH_getshortstr)) { luaV_finishfastset(L, s2v(base + a), slot, rc); } else { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishset(L, s2v(base + a), rb, rc, slot); return 1; } break; }
+      case OP_NEWTABLE: { ci->u.l.savedpc = (const Instruction *)(f->code + pc); int asize = c; if (flags) { pc++; if (pc < f->sizecode) asize += GETARG_Ax(f->code[pc]) * (MAXARG_C + 1); } L->top.p = base + a + 1; Table *t_ = luaH_new(L); sethvalue2s(L, base + a, t_); if (b || asize) { int hsize = (b > 0) ? (1u << (b - 1)) : 0; luaH_resize(L, t_, asize, hsize); } break; }
+      case OP_SELF: { TValue *rb = s2v(base + b), *rc = (flags) ? k + c : s2v(base + c); setobj2s(L, base + a + 1, rb); const TValue *slot; if (luaV_fastget(L, rb, tsvalue(rc), slot, luaH_getstr)) { setobj2s(L, base + a, slot); } else { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_finishget(L, rb, rc, base + a, slot); return 1; } break; }
+      case OP_ADD: { TValue *rb = s2v(base + b); TValue *rc = s2v(base + c); if (ttisinteger(rb) && ttisinteger(rc)) { setivalue(s2v(base + a), intop(+, ivalue(rb), ivalue(rc))); pc++; } else { if (tonumberns(rb, nb) && tonumberns(rc, nc)) { setfltvalue(s2v(base + a), luai_numadd(L, nb, nc)); pc++; } } break; }
+      case OP_ADDI: { TValue *rb = s2v(base + b); if (ttisinteger(rb)) { setivalue(s2v(base + a), intop(+, ivalue(rb), (lua_Integer)sC2int(c))); pc++; } else if (tonumberns(rb, nb)) { setfltvalue(s2v(base + a), luai_numadd(L, nb, cast_num(sC2int(c)))); pc++; } break; }
+      case OP_NOT: { if (l_isfalse(s2v(base + b))) { setbtvalue(s2v(base + a)); } else { setbfvalue(s2v(base + a)); } break; }
+      case OP_LEN: { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = ci->top.p; luaV_objlen(L, base + a, s2v(base + b)); break; }
+      case OP_CONCAT: { ci->u.l.savedpc = (const Instruction *)(f->code + pc); L->top.p = base + a + b; luaV_concat(L, b); break; }
+      case OP_JMP: { pc += (int)(bx - OFFSET_sJ) + 1; continue; }
+      case OP_EQ: { if (luaV_equalobj(L, s2v(base + a), s2v(base + b)) != flags) pc++; break; }
+      case OP_LT: { if (luaV_lessthan(L, s2v(base + a), s2v(base + b)) != flags) pc++; break; }
+      case OP_LE: { if (luaV_lessequal(L, s2v(base + a), s2v(base + b)) != flags) pc++; break; }
+      case OP_EQK: { if (luaV_equalobj(L, s2v(base + a), k + b) != flags) pc++; break; }
+      case OP_EQI: { TValue *ra_v = s2v(base + a); int cond = ttisinteger(ra_v) ? (ivalue(ra_v) == (lua_Integer)sC2int(b)) : (ttisfloat(ra_v) ? luai_numeq(fltvalue(ra_v), cast_num(sC2int(b))) : 0); if (cond != flags) pc++; break; }
+      case OP_TEST: { if (l_isfalse(s2v(base + a)) == flags) pc++; break; }
+      case OP_TESTSET: { TValue *rb = s2v(base + b); if (l_isfalse(rb) == flags) pc++; else setobj2s(L, base + a, rb); break; }
+      case OP_CALL: { StkId ra = base + a; if (b) L->top.p = ra + b; ci->u.l.savedpc = (const Instruction *)(f->code + pc + 1); if (luaD_precall(L, ra, c - 1)) { luaV_execute(L, L->ci); } base = ci->func.p + 1; break; }
+      case OP_RETURN: { StkId ra = base + a; int n_ = b - 1; if (n_ < 0) n_ = cast_int(L->top.p - ra); L->top.p = ra + n_; ci->u.l.savedpc = (const Instruction *)(f->code + pc + 1); luaD_poscall(L, ci, n_); return 0; }
+      case OP_RETURN0: { ci->u.l.savedpc = (const Instruction *)(f->code + pc + 1); L->ci = ci->previous; L->top.p = base - 1; for (int nres = ci->nresults; nres > 0; nres--) setnilvalue(s2v(L->top.p++)); return 0; }
+      case OP_RETURN1: { int nres = ci->nresults; ci->u.l.savedpc = (const Instruction *)(f->code + pc + 1); L->ci = ci->previous; if (!nres) L->top.p = base - 1; else { setobjs2s(L, base - 1, base + a); L->top.p = base; for (; nres > 1; nres--) setnilvalue(s2v(L->top.p++)); } return 0; }
+      case OP_FORLOOP: {
+        StkId ra = base + a;
+        if (ttisinteger(s2v(ra + 2))) {
+          lua_Unsigned count = l_castS2U(ivalue(s2v(ra + 1)));
+          if (count > 0) {
+            lua_Integer step = ivalue(s2v(ra + 2));
+            lua_Integer idx = ivalue(s2v(ra));
+            chgivalue(s2v(ra + 1), count - 1);
+            idx = intop(+, idx, step);
+            chgivalue(s2v(ra), idx);
+            setivalue(s2v(ra + 3), idx);
+            pc -= bx;
+            continue;
+          }
+        }
+        else if (floatforloop(L, ra)) {
+          pc -= bx;
+          continue;
+        }
+        break;
+      }
+      case OP_FORPREP: {
+        StkId ra = base + a;
+        ci->u.l.savedpc = (const Instruction *)(f->code + pc);
+        if (forprep(L, ra))
+          pc += bx;
+        break;
+      }
+      case OP_TFORPREP: {
+        StkId ra = base + a;
+        ci->u.l.savedpc = (const Instruction *)(f->code + pc);
+        luaF_newtbcupval(L, ra + 3);
+        pc += bx;
+        break;
+      }
+      case OP_TFORCALL: {
+        StkId ra = base + a;
+        memcpy(ra + 4, ra, 3 * sizeof(*ra));
+        L->top.p = ra + 4 + 3;
+        ci->u.l.savedpc = (const Instruction *)(f->code + pc + 1);
+        luaD_call(L, ra + 4, c);
+        if (l_unlikely(ci->u.l.trap)) {
+          /* hooks or yield might have happened */
+          base = ci->func.p + 1;
+        }
+        break;
+      }
+      case OP_TFORLOOP: {
+        StkId ra = base + a;
+        if (!ttisnil(s2v(ra + 4))) {
+          setobjs2s(L, ra + 2, ra + 4);
+          pc -= bx;
+          continue;
+        }
+        break;
+      }
+      case OP_SETLIST: {
+        StkId ra = base + a;
+        int n = b;
+        unsigned int last = c;
+        Table *h = hvalue(s2v(ra));
+        if (n == 0)
+          n = cast_int(L->top.p - ra) - 1;
+        else
+          L->top.p = ci->top.p;
+        last += n;
+        if (flags) {
+          pc++;
+          if (pc < f->sizecode)
+             last += GETARG_Ax(f->code[pc]) * (MAXARG_C + 1);
+        }
+        if (last > luaH_realasize(h))
+          luaH_resizearray(L, h, last);
+        for (; n > 0; n--) {
+          TValue *val = s2v(ra + n);
+          setobj2t(L, &h->array[last - 1], val);
+          last--;
+          luaC_barrierback(L, obj2gco(h), val);
+        }
+        break;
+      }
+      case OP_CLOSURE: { if (bx >= 0 && bx < f->sizep) { Proto *p_ = f->p[bx]; LClosure *ncl = luaF_newLclosure(L, p_->sizeupvalues); ncl->p = p_; setclLvalue2s(L, base + a, ncl); for (int i = 0; i < p_->sizeupvalues; i++) { if (p_->upvalues[i].instack) ncl->upvals[i] = luaF_findupval(L, base + p_->upvalues[i].idx); else ncl->upvals[i] = cl->upvals[p_->upvalues[i].idx]; } } break; }
+      default: { ci->u.l.savedpc = (const Instruction *)(f->code + pc); return 1; }
+    }
+    pc++;
   }
-  
-  /* 
-  ** 当前简化实现：
-  ** VM保护的函数仍然使用原始Lua VM执行，
-  ** 但代码已经过混淆和变换。
-  ** 
-  ** 完整的VM解释器需要：
-  ** 1. 从扩展字段读取VM代码
-  ** 2. 使用自定义循环解释执行
-  ** 3. 处理所有VM操作码
-  ** 
-  ** 这需要修改lvm.c中的luaV_execute函数，
-  ** 在检测到VM保护标志时切换到自定义解释器。
-  */
-  
-  (void)L;
   return 0;
 }
 
@@ -3130,11 +3577,27 @@ int luaO_vmProtect (lua_State *L, Proto *f, unsigned int seed) {
   fflush(stderr);
   
   /* 
-  ** 简化实现：不修改代码，只在Proto中设置VM保护标志。
+  ** 注册VM代码到全局表，供运行时VM解释器使用。
   ** VM指令数据已经生成并加密，存储在ctx->vm_code中。
-  ** 完整实现需要将VM数据存储到Proto扩展字段，并在运行时解释执行。
-  ** 当前版本只设置标志，保持原始代码可执行。
   */
+  
+  fprintf(stderr, "[VM DEBUG] Registering VM code to global table...\n");
+  fflush(stderr);
+  
+  /* 注册VM代码到全局表 */
+  VMCodeTable *vt = luaO_registerVMCode(L, f, 
+                                        ctx->vm_code, 
+                                        ctx->vm_code_size,
+                                        ctx->encrypt_key,
+                                        ctx->reverse_map,
+                                        seed);
+  if (vt == NULL) {
+    CFF_LOG("注册VM代码失败");
+    fprintf(stderr, "[VM DEBUG] Failed to register VM code\n");
+    fflush(stderr);
+    luaO_freeVMContext(ctx);
+    return -1;
+  }
   
   /* 标记为VM保护 */
   f->difierline_mode |= OBFUSCATE_VM_PROTECT;
@@ -3147,9 +3610,13 @@ int luaO_vmProtect (lua_State *L, Proto *f, unsigned int seed) {
   fflush(stderr);
   
   CFF_LOG("========== VM保护完成 ==========");
-  CFF_LOG("VM指令数: %d, 加密密钥: 0x%08x", 
-          ctx->vm_code_size, (unsigned int)(ctx->encrypt_key & 0xFFFFFFFF));
+  CFF_LOG("VM指令数: %d, 加密密钥: 0x%016llx", 
+          ctx->vm_code_size, (unsigned long long)ctx->encrypt_key);
+  CFF_LOG("VM代码表已注册: proto=%p, vt=%p", (void*)f, (void*)vt);
   
+  /* 注意：不释放ctx->vm_code和ctx->reverse_map，因为已转移给VMCodeTable */
+  ctx->vm_code = NULL;
+  ctx->reverse_map = NULL;
   luaO_freeVMContext(ctx);
   
   fprintf(stderr, "[VM DEBUG] luaO_vmProtect returning 0\n");

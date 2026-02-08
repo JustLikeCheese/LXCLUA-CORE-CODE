@@ -25,6 +25,67 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+/* Windows上的类型定义 */
+typedef unsigned int pid_t;
+typedef unsigned int uid_t;
+typedef unsigned int gid_t;
+
+/* 文件类型常量 */
+#ifndef S_IFREG
+#define S_IFREG 0100000 /* regular file */
+#endif
+#ifndef S_IFDIR
+#define S_IFDIR 0040000 /* directory */
+#endif
+#ifndef S_IFCHR
+#define S_IFCHR 0020000 /* character device */
+#endif
+#ifndef S_IFBLK
+#define S_IFBLK 0060000 /* block device */
+#endif
+#ifndef S_IFLNK
+#define S_IFLNK 0120000 /* symbolic link */
+#endif
+#ifndef S_IFIFO
+#define S_IFIFO 0010000 /* FIFO */
+#endif
+#ifndef S_IFSOCK
+#define S_IFSOCK 0140000 /* socket */
+#endif
+
+/* 权限常量 */
+#ifndef S_IRUSR
+#define S_IRUSR 00400 /* owner has read permission */
+#endif
+#ifndef S_IWUSR
+#define S_IWUSR 00200 /* owner has write permission */
+#endif
+#ifndef S_IXUSR
+#define S_IXUSR 00100 /* owner has execute permission */
+#endif
+#ifndef S_IRGRP
+#define S_IRGRP 00040 /* group has read permission */
+#endif
+#ifndef S_IWGRP
+#define S_IWGRP 00020 /* group has write permission */
+#endif
+#ifndef S_IXGRP
+#define S_IXGRP 00010 /* group has execute permission */
+#endif
+#ifndef S_IROTH
+#define S_IROTH 00004 /* others have read permission */
+#endif
+#ifndef S_IWOTH
+#define S_IWOTH 00002 /* others have write permission */
+#endif
+#ifndef S_IXOTH
+#define S_IXOTH 00001 /* others have execute permission */
+#endif
 #endif
 
 /*
@@ -220,10 +281,16 @@ static void merge_blocks(void) {
 */
 
 /* 信号处理函数类型 */
+#ifndef _WIN32
 typedef void (*sighandler_t)(int);
-
 /* 全局信号处理函数表 */
 static sighandler_t signal_handlers[64] = {NULL};
+#else
+/* Windows上的信号处理函数类型 */
+typedef void (*sighandler_t)(int);
+/* 全局信号处理函数表 */
+static sighandler_t signal_handlers[64] = {NULL};
+#endif
 
 /* 设置信号处理函数 */
 static sighandler_t my_signal(int signum, sighandler_t handler) {
@@ -235,20 +302,37 @@ static sighandler_t my_signal(int signum, sighandler_t handler) {
 
 /* 发送信号给进程 */
 static int my_kill(pid_t pid, int sig) {
+#ifdef _WIN32
+  /* Windows上不支持kill函数，返回错误 */
+  errno = ENOSYS;
+  return -1;
+#else
   /* 使用标准库函数发送信号 */
   return kill(pid, sig);
+#endif
 }
 
 /* 向自身发送信号 */
 static int my_raise(int sig) {
+#ifdef _WIN32
+  /* Windows上不支持raise函数，返回错误 */
+  errno = ENOSYS;
+  return -1;
+#else
   /* 使用标准库函数向自身发送信号 */
   return raise(sig);
+#endif
 }
 
 /* 获取当前进程ID */
 static pid_t my_getpid(void) {
+#ifdef _WIN32
+  /* Windows上使用GetCurrentProcessId获取当前进程ID */
+  return GetCurrentProcessId();
+#else
   /* 使用标准库函数获取当前进程ID */
   return getpid();
+#endif
 }
 
 /*
@@ -257,26 +341,50 @@ static pid_t my_getpid(void) {
 
 /* 创建子进程 */
 static pid_t my_fork(void) {
+#ifdef _WIN32
+  /* Windows上不支持fork函数，返回错误 */
+  errno = ENOSYS;
+  return -1;
+#else
   /* 使用标准库函数创建子进程 */
   return fork();
+#endif
 }
 
 /* 执行新程序（简化实现） */
 static int my_execve(const char *filename, char *const argv[], char *const envp[]) {
+#ifdef _WIN32
+  /* Windows上不支持execve函数，返回错误 */
+  errno = ENOSYS;
+  return -1;
+#else
   /* 使用标准库函数执行新程序 */
   return execve(filename, argv, envp);
+#endif
 }
 
 /* 等待子进程结束 */
 static pid_t my_wait(int *status) {
+#ifdef _WIN32
+  /* Windows上不支持wait函数，返回错误 */
+  errno = ENOSYS;
+  return -1;
+#else
   /* 使用标准库函数等待子进程结束 */
   return wait(status);
+#endif
 }
 
 /* 等待指定子进程结束 */
 static pid_t my_waitpid(pid_t pid, int *status, int options) {
+#ifdef _WIN32
+  /* Windows上不支持waitpid函数，返回错误 */
+  errno = ENOSYS;
+  return -1;
+#else
   /* 使用标准库函数等待指定子进程结束 */
   return waitpid(pid, status, options);
+#endif
 }
 
 /* 终止进程 */
@@ -746,6 +854,7 @@ static int my_vsscanf(const char *str, const char *format, va_list ap) {
 ** 格式化输出相关定义
 */
 
+#ifndef _WIN32
 /* 辅助函数：将整数转换为字符串 */
 static int itoa(int num, char *buf, int base) {
   int i = 0;
@@ -835,6 +944,18 @@ static int ltoa(long num, char *buf, int base) {
   buf[i] = '\0';
   return i;
 }
+#else
+/* Windows上使用系统提供的itoa和ltoa函数，但需要处理返回值差异 */
+static int itoa(int num, char *buf, int base) {
+  char *result = _itoa(num, buf, base);
+  return result ? (int)strlen(result) : 0;
+}
+
+static int ltoa(long num, char *buf, int base) {
+  char *result = _ltoa(num, buf, base);
+  return result ? (int)strlen(result) : 0;
+}
+#endif
 
 /* 辅助函数：将双精度浮点数转换为字符串（简化实现） */
 static int ftoa(double num, char *buf, int precision) {
@@ -980,7 +1101,7 @@ static int my_vsprintf(char *str, const char *format, va_list ap) {
       }
       case 'p': /* 指针地址 */ {
         void *ptr = va_arg(ap, void *);
-        unsigned long addr = (unsigned long)ptr;
+        unsigned long long addr = (unsigned long long)ptr;
         str[count++] = '0';
         str[count++] = 'x';
         /* 转换为十六进制 */

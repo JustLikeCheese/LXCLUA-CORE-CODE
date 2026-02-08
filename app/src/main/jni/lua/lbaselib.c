@@ -26,10 +26,12 @@
 #include "lgc.h"
 #include <stdint.h>
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && defined(ANDROID_NDK)
 #include <android/log.h>
 #define LOG_TAG "lua"
 #define LOGD(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#else
+#define LOGD(...) ((void)0)
 #endif
 
 /* 声明libc库的初始化函数 */
@@ -1271,13 +1273,21 @@ static const ModuleInfo modules[] = {
   {LUA_DBLIBNAME, luaopen_debug},
   {LUA_BITLIBNAME, luaopen_bit},
   {LUA_PTRLIBNAME, luaopen_ptr},
+
 #ifndef _WIN32
   {LUA_SMGRNAME, luaopen_smgr},
   {"translator", luaopen_translator},
+
+  // 仅安卓端（Android）才加 libc 模块
+#ifdef __ANDROID__
   {"libc", luaopen_libc},
 #endif
+
+#endif
+
   {NULL, NULL}
 };
+
 
 // 前置声明
 static int luaB_fsleep (lua_State *L);
@@ -1984,19 +1994,39 @@ static int do_file_test(const char *path, int op_type) {
       result = (stat(path, &st) == 0 && S_ISREG(st.st_mode));
       break;
     case 4: /* -L 符号链接 */
+#ifdef _WIN32
+      result = 0; /* Windows不支持符号链接检测 */
+#else
       result = (lstat(path, &st) == 0 && S_ISLNK(st.st_mode));
+#endif
       break;
     case 5: /* -b 块设备 */
+#ifdef _WIN32
+      result = 0; /* Windows不支持块设备检测 */
+#else
       result = (stat(path, &st) == 0 && S_ISBLK(st.st_mode));
+#endif
       break;
     case 6: /* -c 字符设备 */
+#ifdef _WIN32
+      result = 0; /* Windows不支持字符设备检测 */
+#else
       result = (stat(path, &st) == 0 && S_ISCHR(st.st_mode));
+#endif
       break;
     case 7: /* -p 管道 */
+#ifdef _WIN32
+      result = 0; /* Windows不支持管道检测 */
+#else
       result = (stat(path, &st) == 0 && S_ISFIFO(st.st_mode));
+#endif
       break;
     case 8: /* -S 套接字 */
+#ifdef _WIN32
+      result = 0; /* Windows不支持套接字检测 */
+#else
       result = (stat(path, &st) == 0 && S_ISSOCK(st.st_mode));
+#endif
       break;
     case 9: /* -r 可读 */
       result = (access(path, R_OK) == 0);
@@ -2008,13 +2038,25 @@ static int do_file_test(const char *path, int op_type) {
       result = (access(path, X_OK) == 0);
       break;
     case 12: /* -u SUID */
+#ifdef _WIN32
+      result = 0; /* Windows不支持SUID检测 */
+#else
       result = (stat(path, &st) == 0 && (st.st_mode & S_ISUID));
+#endif
       break;
     case 13: /* -g SGID */
+#ifdef _WIN32
+      result = 0; /* Windows不支持SGID检测 */
+#else
       result = (stat(path, &st) == 0 && (st.st_mode & S_ISGID));
+#endif
       break;
     case 14: /* -k 粘滞位 */
+#ifdef _WIN32
+      result = 0; /* Windows不支持粘滞位检测 */
+#else
       result = (stat(path, &st) == 0 && (st.st_mode & S_ISVTX));
+#endif
       break;
     case 15: /* -s 非空文件 */
       result = (stat(path, &st) == 0 && st.st_size > 0);
@@ -2541,6 +2583,13 @@ static int with_create_env (lua_State *L) {
 
 static int protect_global (lua_State *L) {
   const char *name = lua_tostring(L, 2);
+  
+  // 检查 name 是否为 NULL
+  if (name == NULL) {
+    // 允许非字符串键
+    lua_rawset(L, 1);
+    return 0;
+  }
   
   // 检查是否为受保护的函数名
   if (strcmp(name, "getenv") == 0) {

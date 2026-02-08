@@ -10,12 +10,21 @@
 #include "lprefix.h"
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
+
+#ifdef _WIN32
+// Windows 专用头文件
+#include <windows.h>
+#include <io.h>
+#else
+// 非 Windows（安卓/Linux/macOS）专用头文件
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#endif
+
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -39,53 +48,111 @@ static void init_app_dirs(lua_State *L) {
   if (app_files_dir != NULL) {
     return;  /* 已经初始化过 */
   }
-  
-  /* 尝试获取activity对象 */
+
+#ifdef _WIN32
+  /* Windows：使用当前目录 */
+  app_files_dir = strdup("./");
+
+#elif defined(__ANDROID__)
+  /* 安卓：通过 Java activity 获取应用私有目录 */
   lua_getglobal(L, "activity");
   if (isJavaObject(L, -1)) {
-    /* 调用getFilesDir()方法 */
     lua_pushstring(L, "getFilesDir");
-    lua_gettable(L, -2);  /* 获取getFilesDir方法 */
+    lua_gettable(L, -2);
     if (lua_isfunction(L, -1)) {
-      lua_pushvalue(L, -3);  /* 压入activity对象 */
-      lua_call(L, 1, 1);  /* 调用getFilesDir()，返回File对象 */
-      
-      /* 调用getAbsolutePath()方法 */
+      lua_pushvalue(L, -3);
+      lua_call(L, 1, 1);
+
       lua_pushstring(L, "getAbsolutePath");
-      lua_gettable(L, -2);  /* 获取getAbsolutePath方法 */
+      lua_gettable(L, -2);
       if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, -3);  /* 压入File对象 */
-        lua_call(L, 1, 1);  /* 调用getAbsolutePath()，返回String对象 */
-        
-        /* 转换为C字符串 */
+        lua_pushvalue(L, -3);
+        lua_call(L, 1, 1);
+
         if (lua_isstring(L, -1)) {
           const char *path_cstr = lua_tostring(L, -1);
           app_files_dir = strdup(path_cstr);
         }
-        
-        lua_pop(L, 1);  /* 弹出String对象 */
+        lua_pop(L, 1);
       }
-      lua_pop(L, 1);  /* 弹出getAbsolutePath方法 */
-      lua_pop(L, 1);  /* 弹出File对象 */
+      lua_pop(L, 1);
+      lua_pop(L, 1);
     }
-    lua_pop(L, 1);  /* 弹出getFilesDir方法 */
+    lua_pop(L, 1);
   }
-  lua_pop(L, 1);  /* 弹出activity全局变量 */
-  
-  /* 如果获取失败，使用默认路径 */
+  lua_pop(L, 1);
+
+  /* 安卓兜底路径 */
   if (app_files_dir == NULL) {
     app_files_dir = strdup("/data/user/0/com.difierline.lua/files/");
   }
-  
+
+#else
+  /* Linux/macOS 等非 Windows、非安卓 */
+  const char *home = getenv("HOME");
+  if (home != NULL) {
+    size_t len = strlen(home) + 16;
+    app_files_dir = (char *)malloc(len);
+    snprintf(app_files_dir, len, "%s/.lxclua/", home);
+  } else {
+    app_files_dir = strdup("./");
+  }
+#endif
+
   /* 构建共享目录路径 */
-  size_t len = strlen(app_files_dir) + strlen(SHARED_DIR_NAME) + 2;  /* +2 用于 '/' 和 '\0' */
+  size_t len = strlen(app_files_dir) + strlen(SHARED_DIR_NAME) + 2;
   shared_data_dir = (char *)malloc(len);
   snprintf(shared_data_dir, len, "%s%s/", app_files_dir, SHARED_DIR_NAME);
+  
+  (void)L;  /* 避免未使用参数警告 */
 }
 
 
 /* 辅助函数：递归创建目录 */
+#ifdef _WIN32
+/* Windows上的mode_t类型定义 */
+typedef unsigned int mode_t;
+#endif
+
 static int mkdir_recursive(const char *path, mode_t mode) {
+#ifdef _WIN32
+  /* Windows上的实现，使用CreateDirectory函数 */
+  char *p = strdup(path);
+  char *q = p;
+  
+  /* 跳过开头的路径分隔符 */
+  while (*q == '/' || *q == '\\') {
+    q++;
+  }
+  
+  /* 递归创建目录 */
+  while ((q = strpbrk(q, "/\\")) != NULL) {
+    *q = '\0';
+    if (*p != '\0') {
+      if (!CreateDirectory(p, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        free(p);
+        return -1;
+      }
+    }
+    *q = '\\';
+    q++;
+    while (*q == '/' || *q == '\\') {
+      q++;
+    }
+  }
+  
+  /* 创建最后一级目录 */
+  if (*p != '\0') {
+    if (!CreateDirectory(p, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+      free(p);
+      return -1;
+    }
+  }
+  
+  free(p);
+  return 0;
+#else
+  /* Unix上的实现 */
   char *p = strdup(path);
   char *q = p;
   int result = 0;
@@ -124,6 +191,7 @@ static int mkdir_recursive(const char *path, mode_t mode) {
   
   free(p);
   return result;
+#endif
 }
 
 /* 辅助函数：通配符匹配 */
@@ -169,6 +237,80 @@ static int wildcard_match(const char *pattern, const char *str) {
 
 /* 辅助函数：递归搜索文件 */
 static void find_files_recursive(const char *base_path, const char *pattern, int recursive, lua_State *L, int result_table) {
+#ifdef _WIN32
+  /* Windows上的实现，使用FindFirstFile和FindNextFile函数 */
+  char search_path[512];
+  char entry_path[512];
+  
+  /* 构建搜索路径 */
+  snprintf(search_path, sizeof(search_path), "%s\\*", base_path);
+  
+  /* 开始搜索 */
+  WIN32_FIND_DATA findData;
+  HANDLE hFind = FindFirstFile(search_path, &findData);
+  if (hFind == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  
+  /* 遍历搜索结果 */
+  do {
+    /* 跳过 . 和 .. 目录 */
+    if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0) {
+      continue;
+    }
+    
+    /* 构建完整路径 */
+    snprintf(entry_path, sizeof(entry_path), "%s\\%s", base_path, findData.cFileName);
+    
+    /* 检查是否匹配模式 */
+    if (wildcard_match(pattern, findData.cFileName)) {
+      /* 添加到结果表 */
+      lua_newtable(L);
+      
+      /* 计算相对路径 */
+      char *shared_data_dir_ptr = strstr(entry_path, shared_data_dir);
+      const char *relative_path = shared_data_dir_ptr ? (shared_data_dir_ptr + strlen(shared_data_dir)) : entry_path;
+      
+      lua_pushstring(L, "path");
+      lua_pushstring(L, relative_path);
+      lua_rawset(L, -3);
+      
+      lua_pushstring(L, "name");
+      lua_pushstring(L, findData.cFileName);
+      lua_rawset(L, -3);
+      
+      if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        lua_pushstring(L, "type");
+        lua_pushstring(L, "directory");
+        lua_rawset(L, -3);
+      } else {
+        lua_pushstring(L, "type");
+        lua_pushstring(L, "file");
+        lua_rawset(L, -3);
+        
+        /* 获取文件大小 */
+        LARGE_INTEGER fileSize;
+        fileSize.LowPart = findData.nFileSizeLow;
+        fileSize.HighPart = findData.nFileSizeHigh;
+        lua_pushstring(L, "size");
+        lua_pushinteger(L, (lua_Integer)fileSize.QuadPart);
+        lua_rawset(L, -3);
+      }
+      
+      /* 添加到结果表 */
+      lua_rawseti(L, result_table, luaL_len(L, result_table) + 1);
+    }
+    
+    /* 递归搜索子目录 */
+    if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && recursive) {
+      find_files_recursive(entry_path, pattern, recursive, L, result_table);
+    }
+  } while (FindNextFile(hFind, &findData));
+  
+  /* 关闭搜索句柄 */
+  FindClose(hFind);
+#else
+  /* Unix上的实现 */
   DIR *dir = opendir(base_path);
   if (dir == NULL) {
     return;
@@ -230,6 +372,7 @@ static void find_files_recursive(const char *base_path, const char *pattern, int
   }
   
   closedir(dir);
+#endif
 }
 
 static int ensure_shared_dir_exists(lua_State *L) {
@@ -383,7 +526,10 @@ static int smgr_listfiles (lua_State *L) {
   /* 获取要列出的目录名，默认为空（根目录） */
   const char *dirname = luaL_optstring(L, 1, "");
   char dirpath[256];
+  char search_path[512];
+  char entry_path[512];
   
+  /* 构建目录路径 */
   if (*dirname == '\0') {
     /* 列出根目录 */
     strncpy(dirpath, shared_data_dir, sizeof(dirpath) - 1);
@@ -398,6 +544,68 @@ static int smgr_listfiles (lua_State *L) {
     }
   }
   
+  /* 创建结果表 */
+  lua_newtable(L);
+  int index = 1;
+  
+#ifdef _WIN32
+  /* Windows上的实现，使用FindFirstFile和FindNextFile函数 */
+  /* 构建搜索路径 */
+  snprintf(search_path, sizeof(search_path), "%s\\*", dirpath);
+  
+  /* 开始搜索 */
+  WIN32_FIND_DATA findData;
+  HANDLE hFind = FindFirstFile(search_path, &findData);
+  if (hFind == INVALID_HANDLE_VALUE) {
+    lua_pushnil(L);
+    lua_pushstring(L, strerror(GetLastError()));
+    return 2;
+  }
+  
+  /* 遍历搜索结果 */
+  do {
+    /* 跳过 . 和 .. 目录 */
+    if (strcmp(findData.cFileName, ".") != 0 && strcmp(findData.cFileName, "..") != 0) {
+      /* 创建条目表 */
+      lua_newtable(L);
+      
+      /* 添加名称 */
+      lua_pushstring(L, "name");
+      lua_pushstring(L, findData.cFileName);
+      lua_rawset(L, -3);
+      
+      /* 检查是文件还是目录 */
+      snprintf(entry_path, sizeof(entry_path), "%s\\%s", dirpath, findData.cFileName);
+      
+      if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        /* 是目录 */
+        lua_pushstring(L, "type");
+        lua_pushstring(L, "directory");
+        lua_rawset(L, -3);
+      } else {
+        /* 是文件 */
+        lua_pushstring(L, "type");
+        lua_pushstring(L, "file");
+        lua_rawset(L, -3);
+        
+        /* 添加文件大小 */
+        LARGE_INTEGER fileSize;
+        fileSize.LowPart = findData.nFileSizeLow;
+        fileSize.HighPart = findData.nFileSizeHigh;
+        lua_pushstring(L, "size");
+        lua_pushinteger(L, (lua_Integer)fileSize.QuadPart);
+        lua_rawset(L, -3);
+      }
+      
+      /* 将条目添加到结果表 */
+      lua_rawseti(L, -2, index++);
+    }
+  } while (FindNextFile(hFind, &findData));
+  
+  /* 关闭搜索句柄 */
+  FindClose(hFind);
+#else
+  /* Unix上的实现 */
   DIR *dir = opendir(dirpath);
   if (dir == NULL) {
     lua_pushnil(L);
@@ -405,8 +613,6 @@ static int smgr_listfiles (lua_State *L) {
     return 2;
   }
   
-  lua_newtable(L);
-  int index = 1;
   struct dirent *entry;
   
   while ((entry = readdir(dir)) != NULL) {
@@ -420,7 +626,6 @@ static int smgr_listfiles (lua_State *L) {
       lua_rawset(L, -3);
       
       /* 检查是文件还是目录 */
-      char entry_path[256];
       snprintf(entry_path, sizeof(entry_path), "%s%s", dirpath, entry->d_name);
       
       struct stat st;
@@ -453,7 +658,10 @@ static int smgr_listfiles (lua_State *L) {
     }
   }
   
+  /* 关闭目录 */
   closedir(dir);
+#endif
+  
   return 1;
 }
 
@@ -463,11 +671,21 @@ static int smgr_fileexists (lua_State *L) {
   init_app_dirs(L);
   const char *filename = luaL_checkstring(L, 1);
   char filepath[256];
+  
+  /* 构建文件路径 */
   snprintf(filepath, sizeof(filepath), "%s%s", shared_data_dir, filename);
   
+#ifdef _WIN32
+  /* Windows上的实现，使用GetFileAttributes函数 */
+  DWORD attr = GetFileAttributes(filepath);
+  lua_pushboolean(L, attr != INVALID_FILE_ATTRIBUTES);
+#else
+  /* Unix上的实现，使用stat函数 */
   struct stat st;
   int result = stat(filepath, &st);
   lua_pushboolean(L, result == 0);
+#endif
+  
   return 1;
 }
 
@@ -477,8 +695,31 @@ static int smgr_getfilesize (lua_State *L) {
   init_app_dirs(L);
   const char *filename = luaL_checkstring(L, 1);
   char filepath[256];
+  
+  /* 构建文件路径 */
   snprintf(filepath, sizeof(filepath), "%s%s", shared_data_dir, filename);
   
+#ifdef _WIN32
+  /* Windows上的实现，使用FindFirstFile函数 */
+  WIN32_FIND_DATA findData;
+  HANDLE hFind = FindFirstFile(filepath, &findData);
+  if (hFind == INVALID_HANDLE_VALUE) {
+    lua_pushnil(L);
+    lua_pushstring(L, strerror(GetLastError()));
+    return 2;
+  }
+  
+  /* 获取文件大小 */
+  LARGE_INTEGER fileSize;
+  fileSize.LowPart = findData.nFileSizeLow;
+  fileSize.HighPart = findData.nFileSizeHigh;
+  
+  /* 关闭搜索句柄 */
+  FindClose(hFind);
+  
+  lua_pushinteger(L, (lua_Integer)fileSize.QuadPart);
+#else
+  /* Unix上的实现，使用stat函数 */
   struct stat st;
   int result = stat(filepath, &st);
   if (result == 0) {
@@ -488,6 +729,8 @@ static int smgr_getfilesize (lua_State *L) {
     lua_pushstring(L, strerror(errno));
     return 2;
   }
+#endif
+  
   return 1;
 }
 
@@ -606,12 +849,23 @@ static int smgr_find (lua_State *L) {
   }
   
   /* 检查基础路径是否存在 */
+#ifdef _WIN32
+  /* Windows上的实现，使用GetFileAttributes函数 */
+  DWORD attr = GetFileAttributes(full_base_path);
+  if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY)) {
+    lua_pushnil(L);
+    lua_pushstring(L, "搜索路径不存在或不是目录");
+    return 2;
+  }
+#else
+  /* Unix上的实现，使用stat函数 */
   struct stat st;
   if (stat(full_base_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
     lua_pushnil(L);
     lua_pushstring(L, "搜索路径不存在或不是目录");
     return 2;
   }
+#endif
   
   /* 创建结果表 */
   lua_newtable(L);

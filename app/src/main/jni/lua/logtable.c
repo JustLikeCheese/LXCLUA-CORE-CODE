@@ -19,10 +19,12 @@
 #include "lualib.h"
 #include "ltable.h"
 
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && defined(ANDROID_NDK)
 #include <android/log.h>
 #define LOG_TAG "lua"
 #define LOGD(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#else
+#define LOGD(...) ((void)0)
 #endif
 
 static int logtable_onlog(lua_State *L) {

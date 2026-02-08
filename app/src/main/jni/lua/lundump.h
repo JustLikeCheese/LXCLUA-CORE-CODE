@@ -36,7 +36,7 @@ LUAI_FUNC int luaU_Vdump (lua_State* L, const Proto* f, lua_Writer w,
                          void* data, int strip);
 
 /* dump one chunk with control flow flattening obfuscation; from ldump.c */
-/* ´ø¿ØÖÆÁ÷±âÆ½»¯»ìÏıµÄ×Ö½ÚÂëµ¼³öº¯Êı */
+/* å¸¦æ§åˆ¶æµæ‰å¹³åŒ–æ··æ·†çš„å­—èŠ‚ç å¯¼å‡ºå‡½æ•° */
 LUAI_FUNC int luaU_dump_obfuscated (lua_State* L, const Proto* f, lua_Writer w,
                                     void* data, int strip, int obfuscate_flags,
                                     unsigned int seed, const char *log_path);

@@ -1,8 +1,7 @@
-/*
-** $Id: lvm.c $
-** Lua virtual machine
-** See Copyright Notice in lua.h
-*/
+/**
+ * @file lvm.c
+ * @brief Lua virtual machine implementation.
+ */
 
 #define lvm_c
 #define LUA_CORE
@@ -60,6 +59,7 @@
 #include "ltm.h"
 #include "lvm.h"
 #include "lclass.h"
+#include "lobfuscate.h"
 
 
 /*
@@ -1203,6 +1203,9 @@ void luaV_finishOp (lua_State *L) {
 #define vmbreak		break
 
 
+/**
+ * @brief Main virtual machine execution loop.
+ */
 void luaV_execute (lua_State *L, CallInfo *ci) {
   LClosure *cl;
   TValue *k;
@@ -1216,6 +1219,17 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
   trap = L->hookmask;
  returning:  /* trap already set */
   cl = ci_func(ci);
+  
+  /* VM保护检测：如果函数启用了VM保护，使用自定义VM解释器执行 */
+  if (cl->p->difierline_mode & OBFUSCATE_VM_PROTECT) {
+    int vm_result = luaO_executeVM(L, cl->p);
+    if (vm_result == 0) {
+      /* VM执行成功，直接返回 */
+      return;
+    }
+    /* vm_result == 1 表示回退到原生VM继续执行 */
+  }
+  
   k = cl->p->k;
   pc = ci->u.l.savedpc;
   if (l_unlikely(trap))
@@ -2099,6 +2113,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         luaC_newclass(L, classname);
         
         /* Protect 后需要重新获取 ra，因为 base 可能已改变 */
+        base = ci->func.p + 1;  /* Stack might have moved */
         StkId ra = RA(i);
         
         /* 将创建的类表从栈顶移动到目标寄存器 */
@@ -2144,6 +2159,8 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         L->top.p++;
         /* 调用super获取函数 */
         luaC_super(L, -1, key);
+        base = ci->func.p + 1;  /* Stack might have moved */
+        ra = RA(i);
         setobj2s(L, ra, s2v(L->top.p - 1));
         L->top.p -= 2;
         updatetrap(ci);
@@ -2212,6 +2229,8 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         }
         /* 调用创建对象函数 */
         luaC_newobject(L, -(nargs + 1), nargs);
+        base = ci->func.p + 1;  /* Stack might have moved */
+        ra = RA(i);
         setobj2s(L, ra, s2v(L->top.p - 1));
         L->top.p -= (nargs + 2);
         updatetrap(ci);
@@ -2233,6 +2252,8 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         L->top.p++;
         /* 调用获取属性函数 */
         luaC_getprop(L, -1, key);
+        base = ci->func.p + 1;  /* Stack might have moved */
+        ra = RA(i);
         setobj2s(L, ra, s2v(L->top.p - 1));
         L->top.p -= 2;
         updatetrap(ci);
@@ -2265,9 +2286,16 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         ** 格式: OP_INSTANCEOF A B C k
         ** 功能: if ((R[A] instanceof R[B]) ~= k) then pc++
         */
+
+        /* 确保堆栈有足够空间 */
+        luaD_checkstack(L, 2);
+
+        /* 重新获取寄存器指针（因为 checkstack 可能导致堆栈重分配） */
+        base = ci->func.p + 1;
         StkId ra = RA(i);
         TValue *rb = vRB(i);
         int result;
+
         /* 保护调用 */
         savestate(L, ci);
         setobj2s(L, L->top.p, s2v(ra));
