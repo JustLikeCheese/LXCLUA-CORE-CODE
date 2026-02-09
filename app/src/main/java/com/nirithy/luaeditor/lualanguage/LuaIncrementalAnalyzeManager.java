@@ -143,7 +143,7 @@ public class LuaIncrementalAnalyzeManager
             "pairs", "ipairs", "next", "select", "unpack", "pcall", "xpcall",
             "error", "assert", "collectgarbage", "dofile", "getmetatable",
             "setmetatable", "rawget", "rawset", "rawequal", "rawlen",
-            "require", "load", "loadfile", "loadstring",
+            "require", "load", "loadfile","loadsfile", "loadstring",
             // 标准库
             "string", "table", "math", "io", "os", "debug", "coroutine", "package",
             "utf8", "bit32",

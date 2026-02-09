@@ -126,6 +126,7 @@ public enum Tokens {
     LOADSTRING,     // loadstring (加载字符串代码)
     DOFILE,         // dofile (执行文件)
     LOADFILE,       // loadfile (加载文件)
+    LOADSFILE,      // loadsfile (加载文件)
     RAWLEN,         // rawlen (原始长度)
     DEBUG,          // debug (调试库)
     PACKAGE,        // package (包管理)

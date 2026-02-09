@@ -23,7 +23,7 @@ public final class AutoCompletePackages {
             "__gc", "__idiv", "__index", "__le", "__len", "__lt", "__mod", "__mul", "__newindex",
             "__pow", "__shl", "__shr", "__sub", "__tostring", "__unm", "_ENV", "_G", "assert",
             "collectgarbage", "dofile", "error", "getfenv", "getmetatable", "ipairs", "load",
-            "loadfile", "loadstring", "module", "next", "pairs", "pcall","proc", "print", "rawequal",
+            "loadfile","loadsfile", "loadstring", "module", "next", "pairs", "pcall","proc", "print", "rawequal",
             "rawget", "rawlen", "rawset", "require", "select", "self", "setfenv", "setmetatable",
             "tointeger", "tonumber", "tostring","toasc2i", "type", "unpack","wymd5", "xpcall", "activity", "call",
              "dump","grand", "each", "fsleep", "fwake", "import", "loadbitmap", "loadlayout", "loadmenu","match", "onDestroy", "onActivityResult", "onResult",

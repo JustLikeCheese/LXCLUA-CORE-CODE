@@ -726,6 +726,26 @@ CallInfo *luaD_precall (lua_State *L, StkId func, int nresults) {
     case LUA_VLCL: {  /* Lua function */
       CallInfo *ci;
       Proto *p = clLvalue(s2v(func))->p;
+      
+      /* 增强的 Upvalue 数据检测 */
+      if (p->sizeupvalues > 0) {
+        for (int i = 0; i < p->sizeupvalues; i++) {
+          const Upvaldesc *uv = &p->upvalues[i];
+          // 检查 instack 值是否合法
+          if (uv->instack != 0 && uv->instack != 1) {
+            luaG_runerror(L, "invalid upvalue instack value");
+          }
+          // 检查 idx 值是否在合理范围内（lu_byte 最大值为 255）
+          if (uv->idx > 255) {
+            luaG_runerror(L, "invalid upvalue idx value");
+          }
+          // 检查 kind 值是否合法
+          if (uv->kind < 0 || uv->kind > 2) {
+            luaG_runerror(L, "invalid upvalue kind value");
+          }
+        }
+      }
+      
       int narg = cast_int(L->top.p - func) - 1;  /* number of real arguments */
       int nfixparams = p->numparams;
       int fsize = p->maxstacksize;  /* frame size */
@@ -1010,9 +1030,9 @@ LUA_API int lua_yieldk (lua_State *L, int nresults, lua_KContext ctx,
   api_checknelems(L, nresults);
   if (l_unlikely(!yieldable(L))) {
     if (L != G(L)->mainthread)
-      luaG_runerror(L, "attempt to yield across a C-call boundary");
+      luaG_runerror(L, "[!] 错误: 尝试在C调用边界处yield");
     else
-      luaG_runerror(L, "attempt to yield from outside a coroutine");
+      luaG_runerror(L, "[!] 错误: 尝试从协程外部执行yield");
   }
   L->status = LUA_YIELD;
   ci->u2.nyield = nresults;  /* save number of results */
@@ -1143,7 +1163,7 @@ static void f_parser (lua_State *L, void *ud) {
 TStatus luaD_protectedparser (lua_State *L, ZIO *z, const char *name,
                                             const char *mode) {
   struct SParser p;
-  int status;
+  TStatus status;
   incnny(L);  /* cannot yield during parsing */
   p.z = z; p.name = name; p.mode = mode;
   p.dyd.actvar.arr = NULL; p.dyd.actvar.size = 0;
