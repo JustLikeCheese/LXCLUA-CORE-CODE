@@ -646,11 +646,11 @@ class MyIdentifierAutoComplete {
             
             // OOP 面向对象关键字 - 类定义
             "class" to KeywordInfo("oclass", CompletionItemKind.Class, "定义类"),
-            "ointerface" to KeywordInfo("ointerface", CompletionItemKind.Interface, "定义接口"),
+            "interface" to KeywordInfo("interface", CompletionItemKind.Interface, "定义接口"),
             "extends" to KeywordInfo("oextends", CompletionItemKind.Keyword, "继承父类"),
             "implements" to KeywordInfo("oimplements", CompletionItemKind.Keyword, "实现接口"),
-            "onew" to KeywordInfo("onew", CompletionItemKind.Constructor, "创建实例"),
-            "osuper" to KeywordInfo("osuper", CompletionItemKind.Keyword, "调用父类"),
+            "new" to KeywordInfo("new", CompletionItemKind.Constructor, "创建实例"),
+            "super" to KeywordInfo("super", CompletionItemKind.Keyword, "调用父类"),
             
             // OOP 访问控制
             "private" to KeywordInfo("private", CompletionItemKind.Keyword, "私有成员"),
@@ -666,8 +666,8 @@ class MyIdentifierAutoComplete {
             "nil", "not", "or", "repeat", "return", "switch", "then", "true",
             "until", "while","when", "print",
             // OOP 面向对象关键字
-            "class", "extends", "implements", "ointerface", "onew",
-            "private", "protected", "public", "static", "osuper"
+            "class", "extends", "implements", "interface", "new",
+            "private", "protected", "public", "static", "super"
         )
     }
 }

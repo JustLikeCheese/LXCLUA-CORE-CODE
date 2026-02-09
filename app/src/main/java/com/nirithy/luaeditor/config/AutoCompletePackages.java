@@ -30,8 +30,8 @@ public final class AutoCompletePackages {
             "onCreateOptionsMenu", "onOptionsItemSelected", "onClick", "onTouch", "onLongClick",
             "onItemClick", "onItemLongClick", "java",
             // OOP 面向对象关键字
-            "abstract", "class", "extends", "final", "implements", "ointerface", "onew",
-            "osuper", "private", "protected", "public", "static");
+            "abstract", "class", "extends", "final", "implements", "interface", "new",
+            "super", "private", "protected", "public", "static");
 
     public static final Map<String, List<String>> DEFAULT_PACKAGES = new HashMap<String, List<String>>() {
         {

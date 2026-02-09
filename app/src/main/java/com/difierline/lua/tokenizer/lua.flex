@@ -245,9 +245,9 @@ Number = {DecNumber} | {HexNumber} | {BinNumber}
   "extends"                 { return EXTENDS; }
   "final"                   { return FINAL; }
   "implements"              { return IMPLEMENTS; }
-  "ointerface"              { return INTERFACE; }
-  "onew"                    { return NEW; }
-  "osuper"                  { return SUPER; }
+  "interface"              { return INTERFACE; }
+  "new"                    { return NEW; }
+  "super"                  { return SUPER; }
   "private"                 { return PRIVATE; }
   "protected"               { return PROTECTED; }
   "public"                  { return PUBLIC; }

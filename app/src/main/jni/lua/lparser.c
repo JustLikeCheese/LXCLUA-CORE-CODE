@@ -89,8 +89,8 @@ static void withstat (LexState *ls, int line);    /* with语句的前向声明 *
 static void classstat (LexState *ls, int line, int class_flags, int isexport);   /* class语句的前向声明 */
 static void interfacestat (LexState *ls, int line); /* interface语句的前向声明 */
 static void enumstat (LexState *ls, int line, int isexport);    /* enum语句的前向声明 */
-static void newexpr (LexState *ls, expdesc *v);   /* onew表达式的前向声明 */
-static void superexpr (LexState *ls, expdesc *v); /* osuper表达式的前向声明 */
+static void newexpr (LexState *ls, expdesc *v);   /* new表达式的前向声明 */
+static void superexpr (LexState *ls, expdesc *v); /* super表达式的前向声明 */
 static void cond_expr (LexState *ls, expdesc *v); /* 条件表达式的前向声明（不将{作为函数调用） */
 static void constexprstat (LexState *ls);         /* 预处理语句 */
 static void ifexpr (LexState *ls, expdesc *v);    /* if表达式前向声明 */
@@ -1946,8 +1946,19 @@ static void body (LexState *ls, expdesc *e, int ismethod, int line) {
     /* 标准语法: (parlist) block end */
     checknext(ls, '(');
     if (ismethod) {
-      new_localvarliteral(ls, "self");  /* 为方法创建 'self' 参数 */
-      adjustlocalvars(ls, 1);
+      /* 检查是否显式定义了 'self' 参数 */
+      int has_self = 0;
+      if (ls->t.token == TK_NAME) {
+        const char *name = getstr(ls->t.seminfo.ts);
+        if (strcmp(name, "self") == 0) {
+          has_self = 1;
+        }
+      }
+
+      if (!has_self) {
+        new_localvarliteral(ls, "self");  /* 为方法创建 'self' 参数 */
+        adjustlocalvars(ls, 1);
+      }
     }
     TString *varargname = NULL;
     parlist(ls, &varargname);
@@ -2200,7 +2211,7 @@ static void primaryexp (LexState *ls, expdesc *v) {
     case TK_NAME: {
       /* 使用软关键字系统检查 new */
       if (softkw_test(ls, SKW_NEW, SOFTKW_CTX_EXPR)) {
-        /* onew ClassName(args...) - 创建类实例 */
+        /* new ClassName(args...) - 创建类实例 */
         newexpr(ls, v);
         return;
       }
@@ -9179,7 +9190,7 @@ static void newexpr(LexState *ls, expdesc *v) {
   int line = ls->linenumber;
   expdesc class_exp, args_exp;
   
-  luaX_next(ls);  /* 跳过 'onew' */
+  luaX_next(ls);  /* 跳过 'new' */
   
   /* 只解析主表达式（类名），不解析后面的函数调用 */
   primaryexp(ls, &class_exp);

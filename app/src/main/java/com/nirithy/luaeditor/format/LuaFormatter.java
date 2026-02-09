@@ -112,7 +112,7 @@ public class LuaFormatter extends AsyncFormatter {
      * - 传统语法 if...then...end / for...do...end: 由 THEN/DO 增加缩进，END 减少
      * - 花括号语法 if [ ] { } / for [ ] { }: 由 LCURLY 增加缩进，RCURLY 减少
      * OOP关键字:
-     * - oclass/ointerface: 类定义，增加缩进，由 END 结束
+     * - oclass/interface: 类定义，增加缩进，由 END 结束
      */
     private static int indent(LuaTokenTypes type) {
         switch (type) {
@@ -146,7 +146,7 @@ public class LuaFormatter extends AsyncFormatter {
 
     /**
      * 将 Lua 源码按给定缩进宽度重新格式化。
-     * 支持 OOP 语法：oclass, ointerface, oextends, oimplements 等
+     * 支持 OOP 语法：class, interface, extends, implements 等
      *
      * @param source 源码
      * @return 格式化后的源码
