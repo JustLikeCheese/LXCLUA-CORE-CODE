@@ -902,6 +902,8 @@ public class LuaIncrementalAnalyzeManager
                 case PUBLIC:
                 case STATIC:
                 case SUPER:
+                case ASYNC:
+                case AWAIT:
                 case EXPORT:
                     classNamePrevious = false;
                     span =
