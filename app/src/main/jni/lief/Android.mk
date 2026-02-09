@@ -23,14 +23,14 @@ LOCAL_SRC_FILES := \
     lua_lief.c
 
 # C编译选项
-LOCAL_CFLAGS := -std=c17 -O3 -flto \
+LOCAL_CFLAGS := -std=c17 -O3 \
                 -funroll-loops -fomit-frame-pointer \
                 -ffunction-sections -fdata-sections \
                 -fstrict-aliasing \
                 -Wall -Wextra
 
 # C++编译选项 (启用异常和RTTI支持以兼容LIEF库)
-LOCAL_CPPFLAGS := -std=c++17 -O3 -flto \
+LOCAL_CPPFLAGS := -std=c++17 -O3 \
                   -funroll-loops -fomit-frame-pointer \
                   -ffunction-sections -fdata-sections \
                   -fstrict-aliasing \

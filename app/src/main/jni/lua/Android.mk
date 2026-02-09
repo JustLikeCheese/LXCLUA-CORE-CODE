@@ -2,7 +2,7 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := lua
-LOCAL_CFLAGS := -std=c23 -O3 -flto \
+LOCAL_CFLAGS := -std=c23 -O3 \
                 -funroll-loops -fomit-frame-pointer \
                 -ffunction-sections -fdata-sections \
                 -fstrict-aliasing
