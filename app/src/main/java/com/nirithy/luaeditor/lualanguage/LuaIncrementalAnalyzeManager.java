@@ -905,6 +905,7 @@ public class LuaIncrementalAnalyzeManager
                 case ASYNC:
                 case AWAIT:
                 case EXPORT:
+                case DEFER:
                     classNamePrevious = false;
                     span =
                             SpanFactory.obtain(

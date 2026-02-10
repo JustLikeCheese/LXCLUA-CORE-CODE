@@ -132,6 +132,7 @@ public enum Tokens {
     DEBUG,          // debug (调试库)
     PACKAGE,        // package (包管理)
     EXPORT,         // export (导出关键字)
+    DEFER,          // defer (延迟执行)
     
     // OOP 面向对象关键字
     ABSTRACT,       // abstract (抽象方法/类)

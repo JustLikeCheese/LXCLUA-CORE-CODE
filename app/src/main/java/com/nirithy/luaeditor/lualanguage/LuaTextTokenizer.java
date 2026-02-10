@@ -1391,7 +1391,8 @@ public class LuaTextTokenizer {
             Tokens.RAWLEN,
             Tokens.DEBUG,
             Tokens.PACKAGE,
-            Tokens.EXPORT
+            Tokens.EXPORT,
+            Tokens.DEFER
         };
         keywords = new TrieTree<>();
         for (int i = 0; i < sKeywords.length; i++) {
