@@ -171,6 +171,15 @@ public enum LuaTokenTypes {
     ASYNC,          // async (异步函数声明)
     AWAIT,          // await (等待异步结果)
 
+    // 结构体关键字
+    STRUCT,         // struct (结构体定义)
+
+    // 概念/约束关键字
+    CONCEPT,        // concept (模板约束)
+
+    // 命名空间关键字
+    NAMESPACE,      // namespace (命名空间)
+
     // 颜色高亮 (兼容旧代码)
     HEX_COLOR,
     HEX_COLOR_HIGH_CONTRAST

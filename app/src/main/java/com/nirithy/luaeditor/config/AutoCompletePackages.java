@@ -31,7 +31,7 @@ public final class AutoCompletePackages {
             "onItemClick", "onItemLongClick", "java", "async", "await",
             // OOP 面向对象关键字
             "abstract", "class", "extends", "final", "implements", "interface", "new",
-            "super", "private", "protected", "public", "static");
+            "super", "private", "protected", "public", "static", "struct", "concept", "namespace");
 
     public static final Map<String, List<String>> DEFAULT_PACKAGES = new HashMap<String, List<String>>() {
         {

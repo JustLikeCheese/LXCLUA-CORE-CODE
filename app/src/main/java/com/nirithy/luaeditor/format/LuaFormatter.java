@@ -125,6 +125,9 @@ public class LuaFormatter extends AsyncFormatter {
             case TRY:
             case CLASS:     // 类定义增加缩进
             case INTERFACE: // 接口定义增加缩进
+            case STRUCT:    // 结构体定义增加缩进
+            case CONCEPT:   // 概念定义增加缩进
+            case NAMESPACE: // 命名空间定义增加缩进
                 return 1;
 
             case UNTIL:
@@ -271,9 +274,12 @@ public class LuaFormatter extends AsyncFormatter {
                         bol = false;
                         break;
 
-                    // OOP 类/接口定义
+                    // OOP 类/接口/结构体/概念/命名空间定义
                     case CLASS:
                     case INTERFACE:
+                    case STRUCT:
+                    case CONCEPT:
+                    case NAMESPACE:
                         sb.append(createIndent(level * indentWidth));
                         sb.append(tokenText);
                         level++;

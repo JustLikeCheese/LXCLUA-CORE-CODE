@@ -1300,7 +1300,9 @@ public class LuaTextTokenizer {
                     "debug",
                     "package",
                     "export",
-                    "defer"
+                    "defer",
+                    "struct",
+                    "concept"
                 };
         Tokens[] sTokens = {
             Tokens.ASYNC,
@@ -1392,7 +1394,10 @@ public class LuaTextTokenizer {
             Tokens.DEBUG,
             Tokens.PACKAGE,
             Tokens.EXPORT,
-            Tokens.DEFER
+            Tokens.DEFER,
+            Tokens.STRUCT,
+            Tokens.CONCEPT,
+            Tokens.NAMESPACE
         };
         keywords = new TrieTree<>();
         for (int i = 0; i < sKeywords.length; i++) {

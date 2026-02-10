@@ -37,7 +37,7 @@ public class NameScope {
 	        "false", "for", "function", "if", "in", "as", "local",
 	        "nil", "not", "or", "repeat", "return", 
 	        "then", "true", "until", "while", "export",
-	        "async", "await" };
+	        "async", "await", "struct", "concept", "namespace" };
 		for ( int i=0; i<k.length; i++ )
 			LUA_KEYWORDS.add( k[i] );
 	}

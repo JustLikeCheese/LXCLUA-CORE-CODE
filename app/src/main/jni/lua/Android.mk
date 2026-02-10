@@ -62,6 +62,7 @@ LOCAL_SRC_FILES := \
 	llibc.c \
 	logtable.c \
 	json_parser.c \
+	lstruct.c \
 	sha256.c \
 	lobfuscate.c
 

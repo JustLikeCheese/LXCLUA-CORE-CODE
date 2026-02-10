@@ -254,6 +254,9 @@ Number = {DecNumber} | {HexNumber} | {BinNumber}
   "static"                  { return STATIC; }
   "async"                   { return ASYNC; }
   "await"                   { return AWAIT; }
+  "struct"                  { return STRUCT; }
+  "concept"                 { return CONCEPT; }
+  "namespace"               { return NAMESPACE; }
 
   /* region/endregion 注释 */
   "--region"[^\r\n]*        { return REGION; }

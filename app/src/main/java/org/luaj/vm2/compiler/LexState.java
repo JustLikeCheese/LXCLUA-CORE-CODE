@@ -187,7 +187,7 @@ public class LexState extends Constants {
             "+=", "-=", "*=", "/=", "//=", "%=", "&=", "|=", "~=", ">>=", "<<=", "..=", "++",
             "?.", "??",
             "<number>", "<name>", "<string>", "<eof>",
-            "defer", "import", "module",
+            "defer", "import", "module", "async", "await", "struct", "concept", "namespace",
     };
 
     final static String luaX_cn_tokens[] = {
@@ -199,7 +199,7 @@ public class LexState extends Constants {
             "加等于", "减等于", "乘等于", "除等于", "整除等于", "取模等于", "按位与等于", "按位或等于", "按位异或等于", "右移等于", "左移等于", "连接等于", "自增",
             "可选链", "空值合并",
             "数字", "名称", "字符串", "文件结束",
-            "延时", "导入", "模块", "异步", "等待",
+            "延时", "导入", "模块", "异步", "等待", "结构体", "概念",
     };
 
     /* terminal symbols denoted by reserved words */
@@ -284,6 +284,9 @@ public class LexState extends Constants {
     final static int TK_MODULE = TK_IMPORT + 1;
     final static int TK_ASYNC = TK_MODULE + 1;
     final static int TK_AWAIT = TK_ASYNC + 1;
+    final static int TK_STRUCT = TK_AWAIT + 1;
+    final static int TK_CONCEPT = TK_STRUCT + 1;
+    final static int TK_NAMESPACE = TK_CONCEPT + 1;
 
     final static int FIRST_RESERVED = TK_AND;
     final static int NUM_RESERVED = TK_WHILE + 1 - FIRST_RESERVED;
