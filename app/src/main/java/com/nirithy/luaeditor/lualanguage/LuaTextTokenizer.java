@@ -1299,7 +1299,8 @@ public class LuaTextTokenizer {
                     "rawlen",
                     "debug",
                     "package",
-                    "export"
+                    "export",
+                    "defer"
                 };
         Tokens[] sTokens = {
             Tokens.ASYNC,
@@ -1387,7 +1388,6 @@ public class LuaTextTokenizer {
             Tokens.LOADSTRING,
             Tokens.DOFILE,
             Tokens.LOADFILE,
-            Tokens.LOADSFILE,
             Tokens.RAWLEN,
             Tokens.DEBUG,
             Tokens.PACKAGE,
