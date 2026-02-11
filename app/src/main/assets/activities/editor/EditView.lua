@@ -432,96 +432,14 @@ function _M.EditorLanguageAsync(code)
       .setHexColorHighlightEnabled(activity.getSharedData("hex_color_highlight") or false)
     end
 
-    local function loadBaseMapsAsync(init_progress, callback)
-      init_progress.Visibility = 0
-      activity.newTask(function(act)
-        act.loadBaseMaps(act)
-        end, function()
-        init_progress.Visibility = 8
-        editor.setEditorLanguage(setupEditorLanguage(activity.base, activity.classMap2))
-        if callback then callback() end
-      end).execute({ activity })
-    end
-
     if not code then
-      -- 先立即设置编辑器语言（不阻塞高亮）
-      if activity.classMap2 then
-        editor.setEditorLanguage(setupEditorLanguage(activity.base, activity.classMap2))
-       else
-        editor.setEditorLanguage(setupEditorLanguage())
-      end
-
-      -- 然后在后台静默扫描，不弹对话框
-      startLibsScan()
-
+      -- 立即设置编辑器语言
+      editor.setEditorLanguage(setupEditorLanguage())
       return _M
     end
 
-    local function handleGenerateCompleteData(callback)
-      MaterialBlurDialogBuilder(activity)
-      .setTitle(res.string.tip)
-      .setMessage(res.string.edit_box_init)
-      .setPositiveButton(res.string.ok, function()
-        ScanUtil.generateCompleteData(activity, {
-          onStart = function()
-            init_progress.parent.Visibility = 0
-          end,
-          onProgress = function(msg, progress)
-            init_progress.setProgressCompat(progress, true)
-            init_text.setText(msg)
-          end,
-          onFinish = function()
-            init_progress.parent.Visibility = 8
-            editor.setEditorLanguage(setupEditorLanguage(activity.base, activity.classMap2))
-            if callback then callback() end
-          end,
-          onError = function(err)
-            MyToast(err)
-            editor.setEditorLanguage(setupEditorLanguage())
-            if callback then callback() end
-          end
-        })
-      end)
-      .setNegativeButton(res.string.no, function()
-        activity.setSharedData("edit_box_init", true)
-        editor.setEditorLanguage(setupEditorLanguage())
-        if callback then callback() end
-      end)
-      .show()
-      .setCancelable(false)
-    end
-
-    local function startLibsScan()
-      -- 静默在后台扫描，不阻塞UI
-      editor.postInLifecycle(function()
-        ScanUtil.scanLibsDirectory(activity, luaproject, {
-          onStart = function() end,  -- 不显示进度
-          onProgress = function() end,  -- 静默
-          onFinish = function()
-            -- 扫描完成后更新补全数据
-            if activity.classMap2 then
-              editor.setEditorLanguage(setupEditorLanguage(activity.base, activity.classMap2))
-            end
-          end,
-          onError = function(error)
-            -- 只在真正出错时提示
-            if not error:find("found") then
-              MyToast(error)
-            end
-          end
-        })
-      end)
-    end
-
-    -- 先立即设置编辑器语言（不阻塞高亮）
-    if activity.classMap2 then
-      editor.setEditorLanguage(setupEditorLanguage(activity.base, activity.classMap2))
-     else
-      editor.setEditorLanguage(setupEditorLanguage())
-    end
-
-    -- 然后在后台静默扫描，不弹对话框
-    startLibsScan()
+    -- 立即设置编辑器语言（不使用扫描数据）
+    editor.setEditorLanguage(setupEditorLanguage())
 
     PackageUtil.load(activity)
     editor.getComponent(bindClass "io.github.rosemoe.sora.widget.component.EditorAutoCompletion")

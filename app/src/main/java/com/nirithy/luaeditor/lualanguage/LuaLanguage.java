@@ -154,50 +154,24 @@ public class LuaLanguage implements Language {
 
     public LuaLanguage(
             HashMap<String, HashMap<String, CompletionName>> hashMap,
-            HashMap<String, List<String>> hashMap2) {
-
-        this.javaQuoteHandler = new LuaQuoteHandler();
-        this.map = new HashMap<>();
-        this.newlineHandlers = new NewlineHandler[] {new BraceHandler(this)};
-
-        this.autoComplete =
-                new MyIdentifierAutoComplete(DEFAULT_KEYWORDS.toArray(new String[0]), hashMap);
-        this.manager = new LuaIncrementalAnalyzeManager();
-        manager.setHexColorHighlightEnabled(this.hexColorHighlightEnabled);
-
-        this.baseMap = hashMap;
-        this.classMap = hashMap2;
-
-        for (Map.Entry<String, List<String>> entry : DEFAULT_PACKAGES.entrySet()) {
-            addPackage(entry.getKey(), entry.getValue());
-        }
-    }
-
-    public LuaLanguage(
-            HashMap<String, HashMap<String, CompletionName>> hashMap,
             HashMap<String, List<String>> hashMap2,
             String[] androidClasses) {
-
+        // 忽略扫描数据，只使用默认补全
+        this.baseMap = new HashMap<>();
+        this.classMap = new HashMap<>();
         this.javaQuoteHandler = new LuaQuoteHandler();
         this.map = new HashMap<>();
         this.newlineHandlers = new NewlineHandler[] {new BraceHandler(this)};
 
         this.autoComplete =
-                new MyIdentifierAutoComplete(DEFAULT_KEYWORDS.toArray(new String[0]), hashMap);
+                new MyIdentifierAutoComplete(DEFAULT_KEYWORDS.toArray(new String[0]), baseMap);
+
         this.manager = new LuaIncrementalAnalyzeManager();
         manager.setHexColorHighlightEnabled(this.hexColorHighlightEnabled);
-
-        this.baseMap = hashMap;
-        this.classMap = hashMap2;
 
         for (Map.Entry<String, List<String>> entry : DEFAULT_PACKAGES.entrySet()) {
             addPackage(entry.getKey(), entry.getValue());
         }
-
-        Set<String> classNameSet =
-                (androidClasses != null) ? new HashSet<>(Arrays.asList(androidClasses)) : null;
-
-        this.manager.setClassMap(classNameSet); // 设置类名集合
     }
 
     public AnalyzeManager getAnalyzeManager() {
