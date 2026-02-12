@@ -144,6 +144,10 @@ int luaV_tonumber_ (const TValue *obj, lua_Number *n) {
     *n = cast_num(ivalue(obj));
     return 1;
   }
+  else if (ttispointer(obj)) {
+    *n = cast_num((L_P2I)ptrvalue(obj));
+    return 1;
+  }
   else if (l_strton(obj, &v)) {  /* string coercible to number? */
     *n = nvalue(&v);  /* convert result of 'luaO_str2num' to a float */
     return 1;
@@ -185,6 +189,10 @@ int luaV_tointegerns (const TValue *obj, lua_Integer *p, F2Imod mode) {
     return luaV_flttointeger(fltvalue(obj), p, mode);
   else if (ttisinteger(obj)) {
     *p = ivalue(obj);
+    return 1;
+  }
+  else if (ttispointer(obj)) {
+    *p = cast(lua_Integer, (L_P2I)ptrvalue(obj));
     return 1;
   }
   else
@@ -347,6 +355,185 @@ static int floatforloop (StkId ra) {
 }
 
 
+static int luaV_ptr_read(lua_State *L, const void *p, const char *key_str, StkId val) {
+  switch (key_str[0]) {
+    case 'i':
+      if (strcmp(key_str, "int") == 0 || strcmp(key_str, "i32") == 0 || strcmp(key_str, "int32") == 0) {
+        setivalue(s2v(val), *(const int*)p); return 1;
+      }
+      if (strcmp(key_str, "i16") == 0 || strcmp(key_str, "int16") == 0) {
+        setivalue(s2v(val), *(const short*)p); return 1;
+      }
+      if (strcmp(key_str, "i8") == 0 || strcmp(key_str, "int8") == 0) {
+        setivalue(s2v(val), *(const char*)p); return 1;
+      }
+      if (strcmp(key_str, "i64") == 0 || strcmp(key_str, "int64") == 0) {
+        setivalue(s2v(val), *(const long*)p); return 1;
+      }
+      break;
+    case 'u':
+      if (strcmp(key_str, "uint") == 0 || strcmp(key_str, "u32") == 0 || strcmp(key_str, "uint32") == 0 || strcmp(key_str, "unsigned int") == 0) {
+        setivalue(s2v(val), *(const unsigned int*)p); return 1;
+      }
+      if (strcmp(key_str, "u8") == 0 || strcmp(key_str, "uint8") == 0 || strcmp(key_str, "uchar") == 0 || strcmp(key_str, "unsigned char") == 0) {
+        setivalue(s2v(val), *(const unsigned char*)p); return 1;
+      }
+      if (strcmp(key_str, "u16") == 0 || strcmp(key_str, "uint16") == 0 || strcmp(key_str, "ushort") == 0 || strcmp(key_str, "unsigned short") == 0) {
+        setivalue(s2v(val), *(const unsigned short*)p); return 1;
+      }
+      if (strcmp(key_str, "ulong") == 0 || strcmp(key_str, "u64") == 0 || strcmp(key_str, "uint64") == 0 || strcmp(key_str, "unsigned long") == 0) {
+        setivalue(s2v(val), (lua_Integer)*(const unsigned long*)p); return 1;
+      }
+      break;
+    case 'f':
+      if (strcmp(key_str, "float") == 0 || strcmp(key_str, "f32") == 0) {
+        setfltvalue(s2v(val), *(const float*)p); return 1;
+      }
+      if (strcmp(key_str, "f64") == 0) {
+        setfltvalue(s2v(val), *(const double*)p); return 1;
+      }
+      break;
+    case 'd':
+      if (strcmp(key_str, "double") == 0) {
+        setfltvalue(s2v(val), *(const double*)p); return 1;
+      }
+      break;
+    case 'c':
+      if (strcmp(key_str, "char") == 0) {
+        setivalue(s2v(val), *(const char*)p); return 1;
+      }
+      if (strcmp(key_str, "cstr") == 0) {
+        const char *s = *(const char**)p;
+        if (s == NULL) setnilvalue(s2v(val));
+        else setsvalue(L, s2v(val), luaS_new(L, s));
+        return 1;
+      }
+      break;
+    case 'b':
+      if (strcmp(key_str, "byte") == 0) {
+        setivalue(s2v(val), *(const unsigned char*)p); return 1;
+      }
+      break;
+    case 's':
+      if (strcmp(key_str, "short") == 0) {
+        setivalue(s2v(val), *(const short*)p); return 1;
+      }
+      if (strcmp(key_str, "size_t") == 0) {
+        setivalue(s2v(val), (lua_Integer)*(const size_t*)p); return 1;
+      }
+      if (strcmp(key_str, "str") == 0) {
+        const char *s = *(const char**)p;
+        if (s == NULL) setnilvalue(s2v(val));
+        else setsvalue(L, s2v(val), luaS_new(L, s));
+        return 1;
+      }
+      break;
+    case 'l':
+      if (strcmp(key_str, "long") == 0) {
+        setivalue(s2v(val), *(const long*)p); return 1;
+      }
+      break;
+    case 'p':
+      if (strcmp(key_str, "ptr") == 0 || strcmp(key_str, "pointer") == 0) {
+        setptrvalue(s2v(val), *(void**)p); return 1;
+      }
+      break;
+  }
+  return 0;
+}
+
+static int luaV_ptr_write(lua_State *L, void *p, const char *key_str, TValue *val) {
+  lua_Integer i;
+  lua_Number n;
+  switch (key_str[0]) {
+    case 'i':
+      if (strcmp(key_str, "int") == 0 || strcmp(key_str, "i32") == 0 || strcmp(key_str, "int32") == 0) {
+        if (tointegerns(val, &i)) *(int*)p = (int)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "i16") == 0 || strcmp(key_str, "int16") == 0) {
+        if (tointegerns(val, &i)) *(short*)p = (short)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "i8") == 0 || strcmp(key_str, "int8") == 0) {
+        if (tointegerns(val, &i)) *(char*)p = (char)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "i64") == 0 || strcmp(key_str, "int64") == 0) {
+        if (tointegerns(val, &i)) *(long*)p = (long)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      break;
+    case 'u':
+      if (strcmp(key_str, "uint") == 0 || strcmp(key_str, "u32") == 0 || strcmp(key_str, "uint32") == 0 || strcmp(key_str, "unsigned int") == 0) {
+        if (tointegerns(val, &i)) *(unsigned int*)p = (unsigned int)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "u8") == 0 || strcmp(key_str, "uint8") == 0 || strcmp(key_str, "uchar") == 0 || strcmp(key_str, "unsigned char") == 0) {
+        if (tointegerns(val, &i)) *(unsigned char*)p = (unsigned char)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "u16") == 0 || strcmp(key_str, "uint16") == 0 || strcmp(key_str, "ushort") == 0 || strcmp(key_str, "unsigned short") == 0) {
+        if (tointegerns(val, &i)) *(unsigned short*)p = (unsigned short)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "ulong") == 0 || strcmp(key_str, "u64") == 0 || strcmp(key_str, "uint64") == 0 || strcmp(key_str, "unsigned long") == 0) {
+        if (tointegerns(val, &i)) *(unsigned long*)p = (unsigned long)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      break;
+    case 'f':
+      if (strcmp(key_str, "float") == 0 || strcmp(key_str, "f32") == 0) {
+        if (tonumberns(val, n)) *(float*)p = (float)n; else luaG_runerror(L, "expected number"); return 1;
+      }
+      if (strcmp(key_str, "f64") == 0) {
+        if (tonumberns(val, n)) *(double*)p = (double)n; else luaG_runerror(L, "expected number"); return 1;
+      }
+      break;
+    case 'd':
+      if (strcmp(key_str, "double") == 0) {
+        if (tonumberns(val, n)) *(double*)p = (double)n; else luaG_runerror(L, "expected number"); return 1;
+      }
+      break;
+    case 'c':
+      if (strcmp(key_str, "char") == 0) {
+        if (tointegerns(val, &i)) *(char*)p = (char)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "cstr") == 0) {
+        if (ttisstring(val)) *(const char**)p = getstr(tsvalue(val));
+        else if (ttisnil(val)) *(char**)p = NULL;
+        else luaG_runerror(L, "expected string or nil");
+        return 1;
+      }
+      break;
+    case 'b':
+      if (strcmp(key_str, "byte") == 0) {
+        if (tointegerns(val, &i)) *(unsigned char*)p = (unsigned char)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      break;
+    case 's':
+      if (strcmp(key_str, "short") == 0) {
+        if (tointegerns(val, &i)) *(short*)p = (short)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "size_t") == 0) {
+        if (tointegerns(val, &i)) *(size_t*)p = (size_t)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      if (strcmp(key_str, "str") == 0) {
+        if (ttisstring(val)) *(const char**)p = getstr(tsvalue(val));
+        else if (ttisnil(val)) *(char**)p = NULL;
+        else luaG_runerror(L, "expected string or nil");
+        return 1;
+      }
+      break;
+    case 'l':
+      if (strcmp(key_str, "long") == 0) {
+        if (tointegerns(val, &i)) *(long*)p = (long)i; else luaG_runerror(L, "expected integer"); return 1;
+      }
+      break;
+    case 'p':
+      if (strcmp(key_str, "ptr") == 0 || strcmp(key_str, "pointer") == 0) {
+        if (ttispointer(val)) *(void**)p = ptrvalue(val);
+        else if (ttisnil(val)) *(void**)p = NULL;
+        else luaG_runerror(L, "expected pointer or nil");
+        return 1;
+      }
+      break;
+  }
+  return 0;
+}
+
 /**
  * @brief Finishes the table access 'val = t[key]'.
  *
@@ -388,6 +575,19 @@ void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
       } else if (ttisstruct(t)) {
         luaS_structindex(L, t, key, val);
         return;
+      } else if (ttispointer(t)) {
+        if (ttisinteger(key)) {
+          unsigned char *p = (unsigned char *)ptrvalue(t);
+          setivalue(s2v(val), p[ivalue(key)]);
+          return;
+        } else if (ttisstring(key)) {
+          const char *k = getstr(tsvalue(key));
+          if (luaV_ptr_read(L, ptrvalue(t), k, val)) return;
+        }
+        /* Fall through to generic metatable lookup */
+        tm = luaT_gettmbyobj(L, t, TM_INDEX);
+        if (l_unlikely(notm(tm)))
+          luaG_typeerror(L, t, "index");
       } else {
         if (ttisstring(t) && ttisinteger(key)) {
           size_t l = tsslen(tsvalue(t));
@@ -499,6 +699,23 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
       if (ttisstruct(t)) {
         luaS_structnewindex(L, t, key, val);
         return;
+      }
+      else if (ttispointer(t)) {
+        if (ttisinteger(key)) {
+          if (ttisinteger(val)) {
+            unsigned char *p = (unsigned char *)ptrvalue(t);
+            p[ivalue(key)] = (unsigned char)ivalue(val);
+            return;
+          }
+          luaG_runerror(L, "pointer value must be integer");
+        } else if (ttisstring(key)) {
+          const char *k = getstr(tsvalue(key));
+          if (luaV_ptr_write(L, ptrvalue(t), k, val)) return;
+        }
+        /* Fall through to generic metatable lookup */
+        tm = luaT_gettmbyobj(L, t, TM_NEWINDEX);
+        if (l_unlikely(notm(tm)))
+          luaG_typeerror(L, t, "index");
       }
       else if (ttistable(t)) {
          Table *h = hvalue(t);
@@ -763,6 +980,8 @@ static int lessthanothers (lua_State *L, const TValue *l, const TValue *r) {
   lua_assert(!ttisnumber(l) || !ttisnumber(r));
   if (ttisstring(l) && ttisstring(r))  /* both are strings? */
     return l_strcmp(tsvalue(l), tsvalue(r)) < 0;
+  else if (ttispointer(l) && ttispointer(r))
+    return (L_P2I)ptrvalue(l) < (L_P2I)ptrvalue(r);
   else
     return luaT_callorderTM(L, l, r, TM_LT);
 }
@@ -795,6 +1014,8 @@ static int lessequalothers (lua_State *L, const TValue *l, const TValue *r) {
   lua_assert(!ttisnumber(l) || !ttisnumber(r));
   if (ttisstring(l) && ttisstring(r))  /* both are strings? */
     return l_strcmp(tsvalue(l), tsvalue(r)) <= 0;
+  else if (ttispointer(l) && ttispointer(r))
+    return (L_P2I)ptrvalue(l) <= (L_P2I)ptrvalue(r);
   else
     return luaT_callorderTM(L, l, r, TM_LE);
 }
@@ -846,6 +1067,7 @@ int luaV_equalobj (lua_State *L, const TValue *t1, const TValue *t2) {
     case LUA_VNUMINT: return (ivalue(t1) == ivalue(t2));
     case LUA_VNUMFLT: return luai_numeq(fltvalue(t1), fltvalue(t2));
     case LUA_VLIGHTUSERDATA: return pvalue(t1) == pvalue(t2);
+    case LUA_VPOINTER: return ptrvalue(t1) == ptrvalue(t2);
     case LUA_VLCF: return fvalue(t1) == fvalue(t2);
     case LUA_VSHRSTR: return eqshrstr(tsvalue(t1), tsvalue(t2));
     case LUA_VLNGSTR: return luaS_eqlngstr(tsvalue(t1), tsvalue(t2));
@@ -1846,15 +2068,39 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         vmbreak;
       }
       vmcase(OP_ADDI) {
-        op_arithI(L, l_addi, luai_numadd);
+        TValue *v1 = vRB(i);
+        int imm = GETARG_sC(i);
+        if (ttispointer(v1)) {
+           StkId ra = RA(i);
+           setptrvalue(s2v(ra), (char *)ptrvalue(v1) + imm);
+           pc++;
+        } else {
+           op_arithI(L, l_addi, luai_numadd);
+        }
         vmbreak;
       }
       vmcase(OP_ADDK) {
-        op_arithK(L, l_addi, luai_numadd);
+        TValue *v1 = vRB(i);
+        TValue *v2 = KC(i);
+        if (ttispointer(v1) && ttisinteger(v2)) {
+          StkId ra = RA(i);
+          setptrvalue(s2v(ra), (char *)ptrvalue(v1) + ivalue(v2));
+          pc++;
+        } else {
+          op_arithK(L, l_addi, luai_numadd);
+        }
         vmbreak;
       }
       vmcase(OP_SUBK) {
-        op_arithK(L, l_subi, luai_numsub);
+        TValue *v1 = vRB(i);
+        TValue *v2 = KC(i);
+        if (ttispointer(v1) && ttisinteger(v2)) {
+          StkId ra = RA(i);
+          setptrvalue(s2v(ra), (char *)ptrvalue(v1) - ivalue(v2));
+          pc++;
+        } else {
+          op_arithK(L, l_subi, luai_numsub);
+        }
         vmbreak;
       }
       vmcase(OP_MULK) {
@@ -1912,11 +2158,35 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         vmbreak;
       }
       vmcase(OP_ADD) {
-        op_arith(L, l_addi, luai_numadd);
+        TValue *v1 = vRB(i);
+        TValue *v2 = vRC(i);
+        if (ttispointer(v1) && ttisinteger(v2)) {
+          StkId ra = RA(i);
+          setptrvalue(s2v(ra), (char *)ptrvalue(v1) + ivalue(v2));
+          pc++;
+        } else if (ttisinteger(v1) && ttispointer(v2)) {
+          StkId ra = RA(i);
+          setptrvalue(s2v(ra), (char *)ptrvalue(v2) + ivalue(v1));
+          pc++;
+        } else {
+          op_arith_aux(L, v1, v2, l_addi, luai_numadd);
+        }
         vmbreak;
       }
       vmcase(OP_SUB) {
-        op_arith(L, l_subi, luai_numsub);
+        TValue *v1 = vRB(i);
+        TValue *v2 = vRC(i);
+        if (ttispointer(v1) && ttisinteger(v2)) {
+          StkId ra = RA(i);
+          setptrvalue(s2v(ra), (char *)ptrvalue(v1) - ivalue(v2));
+          pc++;
+        } else if (ttispointer(v1) && ttispointer(v2)) {
+          StkId ra = RA(i);
+          setivalue(s2v(ra), (char *)ptrvalue(v1) - (char *)ptrvalue(v2));
+          pc++;
+        } else {
+          op_arith_aux(L, v1, v2, l_subi, luai_numsub);
+        }
         vmbreak;
       }
       vmcase(OP_MUL) {

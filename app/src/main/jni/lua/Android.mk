@@ -16,6 +16,7 @@ LOCAL_CFLAGS += -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tabl
 LOCAL_SRC_FILES := \
     aes.c\
     crc.c\
+    lfs.c\
 	lapi.c \
 	lauxlib.c \
 	lbaselib.c \

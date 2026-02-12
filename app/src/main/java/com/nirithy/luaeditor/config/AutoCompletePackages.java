@@ -82,6 +82,15 @@ public final class AutoCompletePackages {
                     "ncasecmp", "next", "offset", "remove", "reverse", "sub", "title", "upper",
                     "width", "widthindex"));
 
+            put("fs", Arrays.asList(
+                    "ls", "isdir", "isfile", "mkdir", "rm", "exists", "stat",
+                    "currentdir", "chdir", "abs", "basename", "dirname", "set_permissions"));
+
+            put("ptr", Arrays.asList(
+                    "new", "addr", "add", "inc", "dec", "sub", "read", "write",
+                    "get", "set", "malloc", "free", "string", "copy", "move",
+                    "fill", "compare", "of", "null", "is_null", "equal", "tohex"));
+
             put("smgr", Arrays.asList(
                     "getuserid", "hasshareduserid", "getdatadir", "readfile", "writefile",
                     "deletefile", "listfiles", "fileexists", "getfilesize", "copyfile",
