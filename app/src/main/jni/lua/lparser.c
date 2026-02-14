@@ -2671,23 +2671,6 @@ static void parse_generic_arrow_body(LexState *ls, FuncState *factory_fs, expdes
 static void primaryexp (LexState *ls, expdesc *v) {
   /* primaryexp -> NAME | '(' expr ')' | STRING | constructor | NEW | SUPER */
   switch (ls->t.token) {
-    case TK_FLT: {
-      init_exp(v, VKFLT, 0);
-      v->u.nval = ls->t.seminfo.r;
-      luaX_next(ls);
-      break;
-    }
-    case TK_BIGFLOAT: {
-      init_exp(v, VK, luaK_bigfloatK(ls->fs, ls->t.seminfo.gc));
-      luaX_next(ls);
-      break;
-    }
-    case TK_INT: {
-      init_exp(v, VKINT, 0);
-      v->u.ival = ls->t.seminfo.i;
-      luaX_next(ls);
-      break;
-    }
     case '(': {
       int line = ls->linenumber;
 
@@ -3103,9 +3086,6 @@ static void suffixedexp (LexState *ls, expdesc *v) {
   FuncState *fs = ls->fs;
   int line = ls->linenumber;
   primaryexp(ls, v);
-  if ((v->k == VKINT || v->k == VKFLT || (v->k == VK && ttisnumber(&fs->f->k[v->u.info]))) && ls->t.token == '[') {
-      return;
-  }
   for (;;) {
     switch (ls->t.token) {
       case TK_OPTCHAIN: {  /* '?.' 可选链字段访问 */
@@ -3465,6 +3445,18 @@ static void simpleexp (LexState *ls, expdesc *v) {
     case TK_IF: {
       ifexpr(ls, v);
       return;
+    }
+    case TK_FLT: {
+      init_exp(v, VKFLT, 0);
+      v->u.nval = ls->t.seminfo.r;
+      luaX_next(ls);
+      break;
+    }
+    case TK_INT: {
+      init_exp(v, VKINT, 0);
+      v->u.ival = ls->t.seminfo.i;
+      luaX_next(ls);
+      break;
     }
     case TK_NIL: {
       init_exp(v, VNIL, 0);
@@ -4367,7 +4359,7 @@ static const struct {
    {1, 1}                    /* => (case operator) */
 };
 
-#define UNARY_PRIORITY	13  /* priority for unary operators */
+#define UNARY_PRIORITY	12  /* priority for unary operators */
 
 
 /*
@@ -4415,25 +4407,16 @@ static BinOpr subexpr (LexState *ls, expdesc *v, int limit) {
   else simpleexp(ls, v);
   /* expand while operators have priorities higher than 'limit' */
   op = getbinopr(ls->t.token);
-  while (1) {
-    if (ls->t.token == '[' && 10 > limit) {
-       yindex_or_slice(ls, v);
-       op = getbinopr(ls->t.token);
-       continue;
-    }
-    if (op != OPR_NOBINOPR && priority[op].left > limit) {
-      expdesc v2;
-      BinOpr nextop;
-      int line = ls->linenumber;
-      luaX_next(ls);  /* skip operator */
-      luaK_infix(ls->fs, op, v);
-      /* read sub-expression with higher priority */
-      nextop = subexpr(ls, &v2, priority[op].right);
-      luaK_posfix(ls->fs, op, v, &v2, line);
-      op = nextop;
-      continue;
-    }
-    break;
+  while (op != OPR_NOBINOPR && priority[op].left > limit) {
+    expdesc v2;
+    BinOpr nextop;
+    int line = ls->linenumber;
+    luaX_next(ls);  /* skip operator */
+    luaK_infix(ls->fs, op, v);
+    /* read sub-expression with higher priority */
+    nextop = subexpr(ls, &v2, priority[op].right);
+    luaK_posfix(ls->fs, op, v, &v2, line);
+    op = nextop;
   }
   leavelevel(ls);
   return op;  /* return first untreated operator */
@@ -11993,9 +11976,7 @@ LClosure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
   lexstate.tokpos=0;
   dyd->actvar.n = dyd->gt.n = dyd->label.n = 0;
   luaX_setinput(L, &lexstate, z, funcstate.f->source, firstchar);
-  StkId anchor_top = L->top.p;
   mainfunc(&lexstate, &funcstate);
-  L->top.p = anchor_top; /* Restore stack to remove tokens anchored during parsing */
   lua_assert(!funcstate.prev && funcstate.nups == 1 && !lexstate.fs);
   /* all scopes should be correctly finished */
   lua_assert(dyd->actvar.n == 0 && dyd->gt.n == 0 && dyd->label.n == 0);
