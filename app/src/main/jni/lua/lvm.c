@@ -58,6 +58,11 @@
 #include "lnamespace.h"
 #include "lsuper.h"
 #include "lbigint.h"
+#include "jit_backend.h"
+
+/* JIT compilation thresholds */
+#define JIT_COMPILE_THRESHOLD	200
+#define JIT_COMPILE_BACKOFF	-1000000000
 
 static int try_add(lua_Integer a, lua_Integer b, lua_Integer *r) {
     if ((b > 0 && a > LUA_MAXINTEGER - b) || (b < 0 && a < LUA_MININTEGER - b)) return 0;
@@ -1664,10 +1669,10 @@ static void inopr (lua_State *L, StkId ra, TValue *a, TValue *b) {
 
 #define op_arith_overflow_aux(L,v1,v2,tryop,fop,bigop) {  \
   StkId ra = RA(i); \
-  if (ttisinteger(v1) && ttisinteger(v2)) {  \
+  if (l_likely(ttisinteger(v1) && ttisinteger(v2))) {  \
     lua_Integer i1 = ivalue(v1); lua_Integer i2 = ivalue(v2); \
     lua_Integer r; \
-    if (tryop(i1, i2, &r)) { \
+    if (l_likely(tryop(i1, i2, &r))) { \
        pc++; setivalue(s2v(ra), r); \
     } else { \
        bigop(L, v1, v2, s2v(ra)); \
@@ -1883,6 +1888,9 @@ static void inopr (lua_State *L, StkId ra, TValue *a, TValue *b) {
 	{ if (l_unlikely(trap)) { updatebase(ci); ra = RA(i); } }
 
 
+#define next_ci(L)  (L->ci->next ? L->ci->next : luaE_extendCI(L))
+
+
 /*
 ** Execute a jump instruction. The 'updatetrap' allows signals to stop
 ** tight loops. (Without it, the local copy of 'trap' could never change.)
@@ -1981,6 +1989,36 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
  returning:  /* trap already set */
   cl = ci_func(ci);
 
+  if (cl->p->jit_code) {
+      JitFunction jf = (JitFunction)cl->p->jit_code;
+      if (jf(L)) {
+         if (ci->callstatus & CIST_FRESH)
+            return;
+         else {
+            ci = ci->previous;
+            goto returning;
+         }
+      }
+  } else {
+      if (cl->p->jit_counter < INT_MAX)
+          cl->p->jit_counter++;
+      if (cl->p->jit_counter > JIT_COMPILE_THRESHOLD) {
+          if (jit_compile(L, cl->p)) {
+              JitFunction jf = (JitFunction)cl->p->jit_code;
+              if (jf(L)) {
+                 if (ci->callstatus & CIST_FRESH)
+                    return;
+                 else {
+                    ci = ci->previous;
+                    goto returning;
+                 }
+              }
+          } else {
+              cl->p->jit_counter = JIT_COMPILE_BACKOFF;
+          }
+      }
+  }
+
   /** VM protection detection: If the function enables VM protection, use a custom VM interpreter */
   if (cl->p->difierline_mode & OBFUSCATE_VM_PROTECT) {
     int vm_result = luaO_executeVM(L, cl->p);
@@ -2023,14 +2061,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
     vmdispatch (GET_OPCODE(i)) {
       vmcase(OP_MOVE) {
         StkId ra = RA(i);
-        TValue *src = s2v(RB(i));
-        TValue *dst = s2v(ra);
-        if (l_unlikely(ttisstruct(src))) {
-           luaS_copystruct(L, dst, src);
-        } else {
-           dst->value_ = src->value_;
-           dst->tt_ = src->tt_;
-        }
+        setobjs2s(L, ra, RB(i));
         vmbreak;
       }
       vmcase(OP_LOADI) {
@@ -2120,7 +2151,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         StkId ra = RA(i);
         TValue *rb = vRB(i);
         TValue *rc = vRC(i);
-        if (ttistable(rb)) {
+        if (l_likely(ttistable(rb))) {
            Table *h = hvalue(rb);
            l_rwlock_rdlock(&h->lock);
            const TValue *res = luaH_get_optimized(h, rc);
@@ -2235,14 +2266,8 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
               luaC_barrierback(L, obj2gco(h), rc);
               l_rwlock_unlock(&h->lock);
            } else {
-              if (!h->using_next && (h->flags & (1u << TM_NEWINDEX))) {
-                 luaH_finishset(L, h, rb, res, rc);
-                 luaC_barrierback(L, obj2gco(h), rc);
-                 l_rwlock_unlock(&h->lock);
-              } else {
-                 l_rwlock_unlock(&h->lock);
-                 Protect(luaV_finishset(L, s2v(ra), rb, rc, NULL));
-              }
+              l_rwlock_unlock(&h->lock);
+              Protect(luaV_finishset(L, s2v(ra), rb, rc, NULL));
            }
         }
         else
@@ -2262,18 +2287,10 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
               luaC_barrierback(L, obj2gco(h), rc);
               l_rwlock_unlock(&h->lock);
            } else {
-              if (!h->using_next && (h->flags & (1u << TM_NEWINDEX))) {
-                 TValue key;
-                 setivalue(&key, c);
-                 luaH_finishset(L, h, &key, res, rc);
-                 luaC_barrierback(L, obj2gco(h), rc);
-                 l_rwlock_unlock(&h->lock);
-              } else {
-                 l_rwlock_unlock(&h->lock);
-                 TValue key;
-                 setivalue(&key, c);
-                 Protect(luaV_finishset(L, s2v(ra), &key, rc, NULL));
-              }
+              l_rwlock_unlock(&h->lock);
+              TValue key;
+              setivalue(&key, c);
+              Protect(luaV_finishset(L, s2v(ra), &key, rc, NULL));
            }
         } else {
           TValue key;
@@ -2470,15 +2487,6 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
       vmcase(OP_ADD) {
         TValue *v1 = vRB(i);
         TValue *v2 = vRC(i);
-        if (ttisinteger(v1) && ttisinteger(v2)) {
-          lua_Integer i1 = ivalue(v1); lua_Integer i2 = ivalue(v2);
-          lua_Integer r;
-          if (try_add(i1, i2, &r)) {
-            StkId ra = RA(i);
-            pc++; setivalue(s2v(ra), r);
-            vmbreak;
-          }
-        }
         if (ttispointer(v1) && ttisinteger(v2)) {
           StkId ra = RA(i);
           setptrvalue(s2v(ra), (char *)ptrvalue(v1) + ivalue(v2));
@@ -2495,15 +2503,6 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
       vmcase(OP_SUB) {
         TValue *v1 = vRB(i);
         TValue *v2 = vRC(i);
-        if (ttisinteger(v1) && ttisinteger(v2)) {
-          lua_Integer i1 = ivalue(v1); lua_Integer i2 = ivalue(v2);
-          lua_Integer r;
-          if (try_sub(i1, i2, &r)) {
-            StkId ra = RA(i);
-            pc++; setivalue(s2v(ra), r);
-            vmbreak;
-          }
-        }
         if (ttispointer(v1) && ttisinteger(v2)) {
           StkId ra = RA(i);
           setptrvalue(s2v(ra), (char *)ptrvalue(v1) - ivalue(v2));
@@ -2696,6 +2695,15 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         vmbreak;
       }
       vmcase(OP_JMP) {
+        if (!cl->p->jit_code && GETARG_sJ(i) < 0) {
+            if (cl->p->jit_counter < INT_MAX)
+                cl->p->jit_counter++;
+            if (cl->p->jit_counter > JIT_COMPILE_THRESHOLD) {
+                 if (!jit_compile(L, cl->p)) {
+                     cl->p->jit_counter = JIT_COMPILE_BACKOFF; // Backoff for a while
+                 }
+            }
+        }
         dojump(ci, i, 0);
         vmbreak;
       }
@@ -2703,15 +2711,13 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
         StkId ra = RA(i);
         int cond;
         TValue *rb = vRB(i);
-        if (ttisinteger(s2v(ra)) && ttisinteger(rb)) {
-           cond = (ivalue(s2v(ra)) == ivalue(rb));
-        } else if (ttisfloat(s2v(ra)) && ttisfloat(rb)) {
-           cond = luai_numeq(fltvalue(s2v(ra)), fltvalue(rb));
-        } else if (ttisshrstring(s2v(ra)) && ttisshrstring(rb)) {
-           cond = eqshrstr(tsvalue(s2v(ra)), tsvalue(rb));
-        } else {
-           Protect(cond = luaV_equalobj(L, s2v(ra), rb));
+        TValue *rc = s2v(ra);
+        if (l_likely(ttisinteger(rc) && ttisinteger(rb))) {
+          cond = (ivalue(rc) == ivalue(rb));
+          goto do_eq_jump;
         }
+        Protect(cond = luaV_equalobj(L, rc, rb));
+        do_eq_jump:
         docondjump();
         vmbreak;
       }
@@ -2804,6 +2810,22 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
             }
             vmbreak;
           }
+
+          int narg = cast_int(L->top.p - ra) - 1;
+          int nfixparams = p->numparams;
+          int fsize = p->maxstacksize;
+          checkstackGCp(L, fsize, ra);
+          CallInfo *nci = L->ci = next_ci(L);
+          nci->func.p = ra;
+          nci->nresults = nresults;
+          nci->callstatus = 0;
+          nci->top.p = ra + 1 + fsize;
+          nci->u.l.savedpc = p->code;
+          for (; narg < nfixparams; narg++)
+            setnilvalue(s2v(L->top.p++));
+          lua_assert(nci->top.p <= L->stack_last.p);
+          ci = nci;
+          goto startfunc;
         }
         
         if ((newci = luaD_precall(L, ra, nresults)) == LUA_NULLPTR)
@@ -2910,9 +2932,18 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
       }
       vmcase(OP_FORLOOP) {
         StkId ra = RA(i);
-        if (ttisinteger(s2v(ra + 2))) {  /* integer loop? */
+        if (!cl->p->jit_code) {
+             if (cl->p->jit_counter < INT_MAX)
+                 cl->p->jit_counter++;
+             if (cl->p->jit_counter > JIT_COMPILE_THRESHOLD) {
+                  if (!jit_compile(L, cl->p)) {
+                      cl->p->jit_counter = JIT_COMPILE_BACKOFF; // Backoff for a while
+                  }
+             }
+        }
+        if (l_likely(ttisinteger(s2v(ra + 2)))) {  /* integer loop? */
           lua_Unsigned count = l_castS2U(ivalue(s2v(ra + 1)));
-          if (count > 0) {  /* still more iterations? */
+          if (l_likely(count > 0)) {  /* still more iterations? */
             lua_Integer step = ivalue(s2v(ra + 2));
             lua_Integer idx = ivalue(s2v(ra));  /* internal index */
             chgivalue(s2v(ra + 1), count - 1);  /* update counter */
@@ -2929,6 +2960,15 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
       }
       vmcase(OP_FORPREP) {
         StkId ra = RA(i);
+        if (!cl->p->jit_code) {
+            if (cl->p->jit_counter < INT_MAX)
+                cl->p->jit_counter++;
+            if (cl->p->jit_counter > JIT_COMPILE_THRESHOLD) {
+                 if (!jit_compile(L, cl->p)) {
+                     cl->p->jit_counter = JIT_COMPILE_BACKOFF; // Backoff for a while
+                 }
+            }
+        }
         savestate(L, ci);  /* in case of errors */
         if (forprep(L, ra))
           pc += GETARG_Bx(i) + 1;  /* skip the loop */
@@ -2970,6 +3010,15 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
       vmcase(OP_TFORLOOP) {
        l_tforloop: {
         StkId ra = RA(i);
+        if (!cl->p->jit_code) {
+             if (cl->p->jit_counter < INT_MAX)
+                 cl->p->jit_counter++;
+             if (cl->p->jit_counter > JIT_COMPILE_THRESHOLD) {
+                  if (!jit_compile(L, cl->p)) {
+                      cl->p->jit_counter = JIT_COMPILE_BACKOFF; // Backoff for a while
+                  }
+             }
+        }
         if (!ttisnil(s2v(ra + 4))) {  /* continue loop? */
           setobjs2s(L, ra + 2, ra + 4);  /* save control variable */
           pc -= GETARG_Bx(i);  /* jump back */
