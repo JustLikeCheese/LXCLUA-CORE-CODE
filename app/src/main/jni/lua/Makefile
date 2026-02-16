@@ -5,12 +5,6 @@
 
 # Your platform. See PLATS for possible values.
 PLAT= guess
-CXX?= g++
-
-CMAKE_GEN=
-ifeq ($(PLAT), mingw)
-	CMAKE_GEN= -G "Unix Makefiles"
-endif
 
 CC= gcc -std=c11 -pipe
 CFLAGS= -O3 -funroll-loops -fomit-frame-pointer -ffunction-sections -fdata-sections -fstrict-aliasing -g0 -DNDEBUG -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wimplicit-function-declaration -D_GNU_SOURCE
@@ -32,7 +26,7 @@ MYOBJS=
 
 # Combine flags for linker
 LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
-LIBS= -lm $(SYSLIBS) $(MYLIBS) -L./asmjit/build -lasmjit -lstdc++
+LIBS= -lm $(SYSLIBS) $(MYLIBS)
 
 # Special flags for compiler modules; -Os reduces code size.
 CMCFLAGS= 
@@ -43,7 +37,7 @@ CMCFLAGS=
 PLATS= guess aix bsd c89 freebsd generic ios linux macosx mingw posix solaris
 
 LUA_A=	liblua.a
-CORE_O= lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o lobfuscate.o lthread.o lstruct.o lnamespace.o lbigint.o lsuper.o jit_backend.o
+CORE_O= lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o lobfuscate.o lthread.o lstruct.o lnamespace.o lbigint.o lsuper.o
 LIB_O= lauxlib.o lbaselib.o lcorolib.o ldblib.o liolib.o lmathlib.o loadlib.o loslib.o lstrlib.o ltablib.o lutf8lib.o linit.o json_parser.o lboolib.o lbitlib.o lptrlib.o ludatalib.o lvmlib.o lclass.o ltranslator.o lsmgrlib.o logtable.o sha256.o aes.o crc.o lthreadlib.o libhttp.o lfs.o lproclib.o lvmpro.o
 BASE_O= $(CORE_O) $(LIB_O) $(MYOBJS)
 
@@ -74,10 +68,10 @@ $(LUA_A): $(BASE_O)
 	$(RANLIB) $@
 
 $(LUA_T): $(LUA_O) $(LUA_A)
-	$(CXX) -o $@ $(LDFLAGS) $(LUA_O) $(LUA_A) $(LIBS)
+	$(CC) -o $@ $(LDFLAGS) $(LUA_O) $(LUA_A) $(LIBS)
 
 $(LUAC_T): $(LUAC_O) $(LUA_A)
-	$(CXX) -o $@ $(LDFLAGS) $(LUAC_O) $(LUA_A) $(LIBS)
+	$(CC) -o $@ $(LDFLAGS) $(LUAC_O) $(LUA_A) $(LIBS)
 
 $(LBCDUMP_T): $(LBCDUMP_O)
 	$(CC) -o $@ $(LDFLAGS) $(LBCDUMP_O)
@@ -153,25 +147,25 @@ Darwin macos macosx:
 	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_MACOSX -DLUA_USE_READLINE" SYSLIBS="-lreadline"
 
 mingw:
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "PLAT=mingw" "LUA_A=lua55.dll" "LUA_T=lxclua.exe" \
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=lua55.dll" "LUA_T=lxclua.exe" \
 	"AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded" \
 	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	"MYOBJS=$(MYOBJS)" lxclua.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "PLAT=mingw" "LUA_A=liblua.a" "LUAC_T=luac.exe" \
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=liblua.a" "LUAC_T=luac.exe" \
 	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	luac.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "PLAT=mingw" "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s -lwininet -lws2_32" lbcdump.exe
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s -lwininet -lws2_32" lbcdump.exe
 
 mingw-static:
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "PLAT=mingw" "LUA_A=liblua.a" "LUA_T=lxclua.exe" \
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=liblua.a" "LUA_T=lxclua.exe" \
 	"AR=$(AR)" "RANLIB=$(RANLIB)" \
 	"SYSCFLAGS=-DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	"MYOBJS=$(MYOBJS)" lxclua.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "PLAT=mingw" "LUA_A=liblua.a" "LUAC_T=luac.exe" \
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=liblua.a" "LUAC_T=luac.exe" \
 	"AR=$(AR)" "RANLIB=$(RANLIB)" \
 	"SYSCFLAGS=-DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	luac.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "PLAT=mingw" "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s -lwininet -lws2_32" lbcdump.exe
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s -lwininet -lws2_32" lbcdump.exe
 
 
 posix:
@@ -184,22 +178,14 @@ SunOS solaris:
 # 需要先安装 Emscripten SDK: https://emscripten.org/docs/getting_started/downloads.html
 # 使用方法: make wasm
 # Emscripten 3.0.0+ 支持 C23 (底层 Clang 18+)
-# Emscripten SDK configuration
-# Use environment variables or rely on PATH
-EMCC ?= emcc
-EMAR ?= emar
-EMRANLIB ?= emranlib
-
-# 本地 WebAssembly 编译 (使用指定路径的 Emscripten)
-# 使用方法: make localwasm EMSDK_PATH="E:\Soft\Proje\LXCLUA-NCore\emsdk"
-EMSDK_PATH ?= E:\Soft\Proje\LXCLUA-NCore\emsdk
-LOCAL_EMCC := $(EMSDK_PATH)/upstream/emscripten/emcc.bat
-LOCAL_EMAR := $(EMSDK_PATH)/upstream/emscripten/emar.bat
-LOCAL_EMRANLIB := $(EMSDK_PATH)/upstream/emscripten/emranlib.bat
+# Emscripten SDK 路径配置（Windows需要.bat扩展名）
+EMSDK_PATH= E:/Soft/Proje/LXCLUA-NCore/emsdk/upstream/emscripten
+EMCC= $(EMSDK_PATH)/emcc.bat
+EMAR= $(EMSDK_PATH)/emar.bat
+EMRANLIB= $(EMSDK_PATH)/emranlib.bat
 
 wasm:
-	$(MAKE) $(ALL) PLAT=wasm CC="$(EMCC) -std=c23" \
-	"CXX=$(EMCC)" \
+	$(MAKE) $(ALL) CC="$(EMCC) -std=c23" \
 	"CFLAGS=-O3 -DNDEBUG -fno-exceptions -DLUA_32BITS=0" \
 	"SYSCFLAGS=-DLUA_USE_LONGJMP -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN" \
 	"SYSLIBS=" \
@@ -208,7 +194,6 @@ wasm:
 	"LUA_T=lxclua.js" \
 	"LUAC_T=luac.js" \
 	"LBCDUMP_T=lbcdump.js" \
-	"LIBS=-lm" \
 	"LDFLAGS=-sWASM=1 -sSINGLE_FILE=1 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,callMain,FS -sMODULARIZE=1 -sEXPORT_NAME=LuaModule -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=1 -sINVOKE_RUN=0 --closure 1"
 
 # WASM 最小化版本（无文件系统，更小体积）
@@ -222,38 +207,10 @@ wasm-minimal:
 	"LUA_T=lxclua.js" \
 	"LUAC_T=luac.js" \
 	"LBCDUMP_T=lbcdump.js" \
-	"LDFLAGS=-sWASM=1 -sSINGLE_FILE=1 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap -sMODULARIZE=1 -sEXPORT_NAME=LuaModule -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0 --closure 1 -sINVOKE_RUN=0"
-
-# 本地 WebAssembly 编译 (使用本地 EMSDK_PATH)
-localwasm:
-	$(MAKE) $(ALL) PLAT=wasm CC="$(LOCAL_EMCC) -std=c23" \
-	"CXX=$(LOCAL_EMCC)" \
-	"CFLAGS=-O3 -DNDEBUG -fno-exceptions -DLUA_32BITS=0" \
-	"SYSCFLAGS=-DLUA_USE_LONGJMP -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN" \
-	"SYSLIBS=" \
-	"AR=$(LOCAL_EMAR) rcu" \
-	"RANLIB=$(LOCAL_EMRANLIB)" \
-	"LUA_T=lxclua.js" \
-	"LUAC_T=luac.js" \
-	"LBCDUMP_T=lbcdump.js" \
-	"LIBS=-lm" \
-	"LDFLAGS=-sWASM=1 -sSINGLE_FILE=1 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,callMain,FS -sMODULARIZE=1 -sEXPORT_NAME=LuaModule -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=1 -sINVOKE_RUN=0 --closure 1"
-
-# 本地 WebAssembly 最小化版本（无文件系统，更小体积）
-localwasm-minimal:
-	$(MAKE) $(ALL) CC="$(LOCAL_EMCC) -std=c23" \
-	"CFLAGS=-Os -DNDEBUG -fno-exceptions -DLUA_32BITS=0" \
-	"SYSCFLAGS=-DLUA_USE_LONGJMP -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN" \
-	"SYSLIBS=" \
-	"AR=$(LOCAL_EMAR) rcu" \
-	"RANLIB=$(LOCAL_EMRANLIB)" \
-	"LUA_T=lxclua.js" \
-	"LUAC_T=luac.js" \
-	"LBCDUMP_T=lbcdump.js" \
-	"LDFLAGS=-sWASM=1 -sSINGLE_FILE=1 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap -sMODULARIZE=1 -sEXPORT_NAME=LuaModule -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0 --closure 1 -sINVOKE_RUN=0"
+	"LDFLAGS=-sWASM=1 -sEXPORTED_RUNTIME_METHODS=ccall,cwrap -sMODULARIZE=1 -sEXPORT_NAME=LuaModule -sALLOW_MEMORY_GROWTH=1 -sFILESYSTEM=0 --closure 1 -sINVOKE_RUN=0"
 
 # Targets that do not create files (not all makes understand .PHONY).
-.PHONY: all $(PLATS) help test clean default o a depend echo wasm wasm-minimal localwasm localwasm-minimal release mingw-release linux-release macos-release wasm-release termux-release
+.PHONY: all $(PLATS) help test clean default o a depend echo wasm wasm-minimal release mingw-release linux-release macos-release wasm-release termux-release
 
 # 发行版打包配置
 RELEASE_NAME= lxclua
@@ -326,7 +283,6 @@ wasm-release: wasm
 	@echo "Signed by: $(SIGNER)" >> $(RELEASE_DIR)/BUILD_INFO.txt
 	@echo "Platform: WebAssembly" >> $(RELEASE_DIR)/BUILD_INFO.txt
 	@cp lxclua.js luac.js lbcdump.js $(RELEASE_DIR)/
-	@cp *.wasm $(RELEASE_DIR)/
 	@cp LICENSE README.md README_EN.md $(RELEASE_DIR)/
 	@tar -caf $(RELEASE_NAME)-wasm-$(RELEASE_VERSION).zip -C $(RELEASE_DIR) .
 	@rm -rf $(RELEASE_DIR)
@@ -433,23 +389,3 @@ lzio.o: lzio.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
  lobject.h ltm.h lzio.h lmem.h
 
 # (end of Makefile)
-
-setup_asmjit:
-	@if [ "$(PLAT)" = "wasm" ]; then \
-		echo "Skipping asmjit setup for WASM"; \
-	else \
-		if [ ! -f "asmjit/CMakeLists.txt" ]; then \
-			echo "Cloning asmjit..."; \
-			rm -rf asmjit; \
-			git clone https://github.com/asmjit/asmjit.git; \
-		fi; \
-		if [ ! -f "asmjit/build/libasmjit.a" ]; then \
-			echo "Building asmjit..."; \
-			rm -rf asmjit/build; \
-			mkdir -p asmjit/build; \
-			cd asmjit/build && cmake $(CMAKE_GEN) .. -DASMJIT_STATIC=ON -DASMJIT_TEST=OFF && make -j4; \
-		fi; \
-	fi
-
-jit_backend.o: setup_asmjit
-	$(CXX) -std=c++17 -O3 -fomit-frame-pointer -g0 -DNDEBUG -D_GNU_SOURCE -DASMJIT_STATIC -I./asmjit -c jit_backend.cpp

@@ -23,7 +23,6 @@
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
-#include "jit_backend.h"
 
 
 /**
@@ -357,8 +356,6 @@ Proto *luaF_newproto (lua_State *L) {
   f->source = NULL;
   f->is_sleeping = 0;
   f->call_queue = NULL;
-  f->jit_counter = 0;
-  f->jit_code = NULL;
   return f;
 }
 
@@ -399,7 +396,6 @@ void luaF_freeproto (lua_State *L, Proto *f) {
   luaM_freearray(L, f->locvars, f->sizelocvars);
   luaM_freearray(L, f->upvalues, f->sizeupvalues);
   luaF_freecallqueue(L, f->call_queue);
-  if (f->jit_code) jit_free(f);
   luaM_free(L, f);
 }
 
