@@ -66,6 +66,7 @@ LXCLUA-NCore 引入了大量现代语言特性和语法糖，极大地扩展了 
 - **复合赋值**: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `&=`, `|=`, `~=`, `>>=`, `<<=`, `..=`
 - **自增/自减**: `++` (e.g. `i++` 后缀自增), `--` (e.g. `i--` 后缀自减)
 - **比较**: `!=` (等价于 `~=`), `<=>` (三路比较)
+- **类型检查**: `is` (检查对象是否为类的实例)
 - **空值处理**: `??` (空值合并), `?.` (可选链)
 - **管道操作**: `|>` (正向), `<|` (反向), `|?>` (安全正向)
 - **赋值表达式**: `:=` (Walrus Operator) 允许在表达式中进行赋值
@@ -95,8 +96,9 @@ local result = "hello" |> string.upper |> print  -- 打印 HELLO, result 为 "he
 
 -- 安全管道 (Safe Pipe)
 -- x |?> f 等价于 x and f(x)
+-- 注意: 这是一个表达式，需要接收返回值或使用
 local maybe_nil = nil
-maybe_nil |?> print  -- (什么都不打印)
+local _ = maybe_nil |?> print  -- (什么都不打印)
 
 -- 赋值表达式 (Walrus Operator)
 local x
@@ -107,7 +109,7 @@ end
 
 ### 2. 字符串增强 (Enhanced Strings)
 
-- **插值字符串**: 使用 `"` 或 `'` 包裹，支持 `${var}` 和 `${[expr]}`。
+- **插值字符串**: 使用 `"` 或 `'` 包裹，支持 `${var}`。
 - **原生字符串**: 使用 `_raw` 前缀，不处理转义字符。
 
 ```lua
@@ -117,19 +119,16 @@ local age = 25
 -- 简单变量插值
 print("Hello, ${name}!")  -- Hello, World!
 
--- 表达式插值
-print("Next year: ${[age + 1]}")  -- Next year: 26
-
 -- 原始字符串 (Raw String)
 local path = _raw"C:\Windows\System32"  -- C:\Windows\System32
 ```
 
 ### 3. 函数特性 (Function Features)
 
-- **箭头函数**: `(args) => expr` 或 `(args) => { stat }`
+- **箭头函数**: `(args) => expr` 或 `->(args) { stat }`
 - **Lambda 表达式**: `lambda(args) => expr`
 - **C 风格定义**: `int add(int a, int b) { ... }`
-- **泛型函数**: `function<T>(x) ... end`
+- **泛型函数**: `function(T)(x) ... end`
 - **Async/Await**: `async function`, `await`
 
 ```lua
@@ -137,10 +136,10 @@ local path = _raw"C:\Windows\System32"  -- C:\Windows\System32
 local add = (a, b) => a + b
 print(add(10, 20))  -- 30
 
--- 箭头函数 (语句块形式)
-local log = (msg) => print("[LOG]: " .. msg)
+-- 箭头函数 (语句块形式，使用 do ... end)
+local log = (msg) => do print("[LOG]: " .. msg) end
 
--- 箭头函数 (-> 语法)
+-- 箭头函数 (-> 语法，支持 {})
 local fast_add = ->(a, b) { return a + b }
 local simple_action = -> { print("Action") }
 
@@ -152,9 +151,16 @@ int sum(int a, int b) {
     return a + b;
 }
 
--- 泛型函数
-function(T)(x)
+-- 泛型函数 (带约束)
+-- 注意: 需作为表达式赋值给变量
+local f = function(T)(x) requires type(x) == "number"
     return x
+end
+
+-- 函数属性 (nodiscard: 忽略返回值时警告)
+-- 语法: function Name() <nodiscard> ... end
+function important() <nodiscard>
+    return "must use this"
 end
 
 -- 异步函数
@@ -199,7 +205,7 @@ class Circle extends Shape
         return self._radius
     end
 
-    -- Setter 属性
+    -- Setter 属性 (自动绑定 self)
     public set radius(v)
         if v >= 0 then self._radius = v end
     end
@@ -233,7 +239,7 @@ end
 - **超结构体 (SuperStruct)**: `superstruct Name [ key: value, ... ]`
 - **泛型结构体**: `struct Box(T) { T value; }`
 - **枚举**: `enum Name { A, B=10 }`
-- **强类型变量**: `int`, `float`, `bool`, `string` 等
+- **强类型变量**: `int`, `float`, `bool`, `string`, `double`, `long`, `char` 等
 - **解构赋值**: `local take { ... } = expr`
 
 ```lua
@@ -277,7 +283,24 @@ local take { x, y } = data
 print(x, y)  -- 1, 2
 ```
 
-### 6. 控制流扩展 (Control Flow)
+### 6. 切片语法 (Slice Syntax)
+
+支持 Python 风格的表切片操作 `t[start:end:step]`。
+
+```lua
+local t = {10, 20, 30, 40, 50}
+
+-- 基本切片 [start:end] (包含 end)
+local sub1 = t[2:4]  -- {20, 30, 40}
+
+-- 省略 start (默认为 1)
+local sub2 = t[:3]   -- {10, 20, 30}
+
+-- 步长切片 [start:end:step]
+local sub3 = t[1:5:2] -- {10, 30, 50}
+```
+
+### 7. 控制流扩展 (Control Flow)
 
 - **Switch**: `switch (exp) { case v: ... }` 或 `switch (exp) do ... end`
 - **Try-Catch**: `try ... catch(e) ... finally ... end`
@@ -354,14 +377,20 @@ with (obj) {
 }
 ```
 
-### 7. 元编程 (Metaprogramming)
+### 8. 元编程 (Metaprogramming)
 
 - **自定义命令 (command)**: 定义 Shell 风格调用的函数
 - **自定义关键字 (keyword)**: 定义新的关键字语法
 - **自定义运算符 (operator)**: 重载或定义新运算符
 - **预处理指令**: `$if`, `$define`, `$include` 等
 
+> 注意：使用自定义特性前，请确保环境中已初始化 `_OPERATORS`, `_CMDS`, `_KEYWORDS` 表。
+
 ```lua
+-- 初始化元表 (如果尚未初始化)
+if not _G._OPERATORS then _G._OPERATORS = {} end
+if not _G._CMDS then _G._CMDS = {} end
+
 -- 自定义命令
 command echo(msg)
     print(msg)
@@ -376,16 +405,15 @@ end
 
 -- 预处理指令
 $define DEBUG 1
-$alias print_debug = print
 
 $if DEBUG
-    print_debug("Debug mode on")
+    print("Debug mode on")
 $else
     print("Debug mode off")
 $end
 ```
 
-### 8. 内联汇编 (Inline ASM)
+### 9. 内联汇编 (Inline ASM)
 
 支持 `asm` 块直接编写虚拟机指令，用于极致优化或底层操作。
 
@@ -395,11 +423,11 @@ asm(
     LOADI 1 200
     ADD 2 0 1
     _print "Result: " 2 ; 编译时打印
-    nop 5                ; 插入 5 个 NOP 指令
+    MOVE 3 2             ; 使用标准 Lua 操作码名称
 )
 ```
 
-### 9. 模块与作用域 (Modules & Scope)
+### 10. 模块与作用域 (Modules & Scope)
 
 - **导出 (Export)**: `export` 关键字标记模块公开成员。
 - **全局 (Global)**: `global` 关键字用于在局部作用域中显式定义全局变量。
@@ -417,8 +445,59 @@ global function init()
 end
 ```
 
+### 11. 高级特性 (Advanced Features)
 
-### 10. 扩展库示例 (Extended Libraries)
+#### 对象宏 (Object Macro)
+`$object` 宏可以快速创建键值与变量名一致的表。
+
+```lua
+local x = 10
+local y = "hello"
+local obj = $object(x, y)
+-- 等价于 { x = x, y = y }
+print(obj.x) -- 10
+```
+
+#### 运算符调用 (Operator Call)
+使用 `$$` 前缀可以直接调用已定义的运算符函数（需要先定义 `operator`）。
+
+```lua
+operator + (a, b)
+    return a + b
+end
+
+local res = $$+(10, 20) -- 调用 _OPERATORS["+"](10, 20)
+print(res) -- 30
+```
+
+#### Lambda 简写 (Lambda Shorthand)
+`lambda` 支持使用 `:` 作为 `return` 的简写。
+
+```lua
+local double = lambda(x): x * 2
+print(double(10)) -- 20
+```
+
+#### 概念表达式 (Concept Expression)
+`concept` 支持单行表达式定义。
+
+```lua
+concept IsPositive(x) = x > 0
+print(IsPositive(10)) -- true
+```
+
+#### C 风格函数与变量 (C-style Features)
+支持 C 风格的函数定义和变量声明。
+
+```lua
+int add(int a, int b) {
+    return a + b;
+}
+
+int count = 100;
+```
+
+### 12. 扩展库示例 (Extended Libraries)
 
 #### 文件系统 (fs)
 ```lua
