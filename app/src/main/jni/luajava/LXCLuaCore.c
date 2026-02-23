@@ -197,6 +197,17 @@ java_object *checkJavaObject(lua_State *L, int idx) {
     return obj;
 }
 
+int isJavaObject(lua_State *L, int idx) {
+    if (!lua_getmetatable(L, idx)) {
+        return 0;
+    }
+    lua_pushstring(L, LUAJAVAOBJECTIND);
+    lua_rawget(L, -2);
+    int result = lua_toboolean(L, -1);
+    lua_pop(L, 2);
+    return result;
+}
+
 jobject *toJavaObject(lua_State *L, int idx){
     JNIEnv *env = checkEnv(L);
     jlong stateIndex = checkIndex(L);
