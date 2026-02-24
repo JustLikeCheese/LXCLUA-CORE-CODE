@@ -386,7 +386,7 @@ class StringAutoComplete {
                 // import/require: 提供模块补全
                 addImportCompletions(items, prefix)
             }
-            "dofile", "loadfile" -> {
+           "loadsfile", "dofile", "loadfile" -> {
                 // dofile/loadfile: 只提供文件路径补全
                 addFilePathCompletions(items, prefix)
             }
@@ -637,7 +637,7 @@ class StringAutoComplete {
         val lineStr = line.toString().substring(0, minOf(column, line.length))
         
         // 查找常见的上下文关键字
-        val keywords = listOf("import", "require", "dofile", "loadfile")
+        val keywords = listOf("import", "require", "dofile", "loadfile","loadsfile")
         
         for (keyword in keywords) {
             // 匹配: keyword 后面可选空格、可选括号、可选空格，然后是引号

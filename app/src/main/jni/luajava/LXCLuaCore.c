@@ -1393,29 +1393,6 @@ int pushJavaObject(lua_State *L, const char *name,int idx,int isclass) {
 
 /***************************************************************************
 *
-*  Function: isJavaObject
-*  ****/
-
-int inline isJavaObject(lua_State *L, int idx) {
-    if (!lua_isuserdata(L, idx))
-        return 0;
-
-    if (lua_getmetatable(L, idx) == 0)
-        return 0;
-
-    lua_pushstring(L, LUAJAVAOBJECTIND);
-    lua_rawget(L, -2);
-
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 2);
-        return 0;
-    }
-    lua_pop(L, 2);
-    return 1;
-}
-
-/***************************************************************************
-*
 *  Function: getStateFromCPtr
 *  ****/
 lua_State *getStateFromCPtr(JNIEnv *env, jlong cptr) {

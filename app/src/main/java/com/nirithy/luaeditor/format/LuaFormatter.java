@@ -112,7 +112,7 @@ public class LuaFormatter extends AsyncFormatter {
      * - 传统语法 if...then...end / for...do...end: 由 THEN/DO 增加缩进，END 减少
      * - 花括号语法 if [ ] { } / for [ ] { }: 由 LCURLY 增加缩进，RCURLY 减少
      * OOP关键字:
-     * - oclass/ointerface: 类定义，增加缩进，由 END 结束
+     * - oclass/interface: 类定义，增加缩进，由 END 结束
      */
     private static int indent(LuaTokenTypes type) {
         switch (type) {
@@ -125,6 +125,10 @@ public class LuaFormatter extends AsyncFormatter {
             case TRY:
             case CLASS:     // 类定义增加缩进
             case INTERFACE: // 接口定义增加缩进
+            case STRUCT:    // 结构体定义增加缩进
+            case SUPERSTRUCT: // 超级结构体定义增加缩进
+            case CONCEPT:   // 概念定义增加缩进
+            case NAMESPACE: // 命名空间定义增加缩进
                 return 1;
 
             case UNTIL:
@@ -146,7 +150,7 @@ public class LuaFormatter extends AsyncFormatter {
 
     /**
      * 将 Lua 源码按给定缩进宽度重新格式化。
-     * 支持 OOP 语法：oclass, ointerface, oextends, oimplements 等
+     * 支持 OOP 语法：class, interface, extends, implements 等
      *
      * @param source 源码
      * @return 格式化后的源码
@@ -163,6 +167,9 @@ public class LuaFormatter extends AsyncFormatter {
         
         // 跟踪是否刚遇到 abstract 关键字（用于判断抽象方法声明）
         boolean afterAbstract = false;
+        
+        // 跟踪是否刚遇到 async 关键字（用于判断异步函数）
+        boolean afterAsync = false;
         
         while (true) {
             LuaTokenTypes token;
@@ -189,6 +196,7 @@ public class LuaFormatter extends AsyncFormatter {
                 sb.append('\n');
                 bol = true;
                 afterAbstract = false;  // 换行时重置 abstract 标志
+                afterAsync = false;  // 换行时重置 async 标志
                 level = Math.max(0, level);
             } else if (bol) {
                 // 行首逻辑
@@ -241,6 +249,15 @@ public class LuaFormatter extends AsyncFormatter {
                         bol = false;
                         break;
 
+                    // async 关键字：修饰函数，后面需要空格
+                    case ASYNC:
+                        sb.append(createIndent(level * indentWidth));
+                        sb.append(tokenText);
+                        sb.append(' ');  // async 后面加空格
+                        afterAsync = true;  // 标记遇到了 async
+                        bol = false;
+                        break;
+
                     case DOUBLE_COLON:
                     case AT:
                         sb.append(tokenText);
@@ -258,9 +275,13 @@ public class LuaFormatter extends AsyncFormatter {
                         bol = false;
                         break;
 
-                    // OOP 类/接口定义
+                    // OOP 类/接口/结构体/概念/命名空间定义
                     case CLASS:
                     case INTERFACE:
+                    case STRUCT:
+                    case SUPERSTRUCT:
+                    case CONCEPT:
+                    case NAMESPACE:
                         sb.append(createIndent(level * indentWidth));
                         sb.append(tokenText);
                         level++;
@@ -335,14 +356,19 @@ public class LuaFormatter extends AsyncFormatter {
                     } else if (token == LuaTokenTypes.FUNCTION) {
                         // 非行首的 function（可能被 abstract/public/private 等修饰）
                         // 抽象方法声明或接口内的方法声明不增加缩进
-                        if (!afterAbstract && (blockStack.isEmpty() || blockStack.peek() != LuaTokenTypes.INTERFACE)) {
+                        // async function 也不增加缩进（因为 function 前面已经有 async 处理）
+                        if (!afterAbstract && !afterAsync && (blockStack.isEmpty() || blockStack.peek() != LuaTokenTypes.INTERFACE)) {
                             level++;
                             blockStack.push(token);
                         }
                         afterAbstract = false;  // 重置标志
+                        afterAsync = false;  // 重置标志
                     } else if (token == LuaTokenTypes.ABSTRACT) {
                         // 非行首遇到 abstract（比如在修饰符之后）
                         afterAbstract = true;
+                    } else if (token == LuaTokenTypes.ASYNC) {
+                        // async 关键字：后面不加缩进（不是块开始）
+                        afterAsync = true;  // 标记遇到了 async
                     } else if (token == LuaTokenTypes.KEYWORD || token == LuaTokenTypes.OPERATOR_KW) {
                         // 动态关键字和运算符重载：增加缩进级别
                         level++;

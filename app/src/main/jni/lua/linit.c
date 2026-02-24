@@ -41,6 +41,24 @@ int luaopen_libc(lua_State *L);
 /* 声明logtable库的初始化函数 */
 int luaopen_logtable(lua_State *L);
 
+/* 声明thread库的初始化函数 */
+int luaopen_thread(lua_State *L);
+
+/* 声明struct库的初始化函数 */
+int luaopen_struct(lua_State *L);
+
+/* 声明http库的初始化函数 */
+int luaopen_http(lua_State *L);
+
+/* 声明fs库的初始化函数 */
+int luaopen_fs(lua_State *L);
+
+/* 声明process库的初始化函数 */
+int luaopen_process(lua_State *L);
+
+/* 声明vmprotect库的初始化函数 */
+int luaopen_vmprotect(lua_State *L);
+
 // clang and ffi libraries
 
 /*
@@ -68,12 +86,21 @@ static const luaL_Reg stdlibs[] = {
   {LUA_VMLIBNAME, luaopen_vm},
   {LUA_BITLIBNAME, luaopen_bit},
   {LUA_PTRLIBNAME, luaopen_ptr},
+  {LUA_STRUCTLIBNAME, luaopen_struct},
   {"bit32", luaopen_bit},
+  {"thread", luaopen_thread},
+  {"http", luaopen_http},
+  {LUA_FSLIBNAME, luaopen_fs},
+  {"vmprotect", luaopen_vmprotect},
 
 #ifndef _WIN32
   {LUA_SMGRNAME, luaopen_smgr},
   {"translator", luaopen_translator},
   {"logtable", luaopen_logtable},
+
+#ifdef __linux__
+  {"process", luaopen_process},
+#endif
 
   // 仅安卓额外加 libc
 #ifdef __ANDROID__
@@ -126,12 +153,21 @@ static const luaL_Reg loadedlibs[] = {
   {LUA_DBLIBNAME, luaopen_debug},
   {LUA_BITLIBNAME, luaopen_bit},
   {LUA_PTRLIBNAME, luaopen_ptr},
+  {LUA_STRUCTLIBNAME, luaopen_struct},
   {"bit32", luaopen_bit},
+  {"thread", luaopen_thread},
+  {"http", luaopen_http},
+  {LUA_FSLIBNAME, luaopen_fs},
+  {"vmprotect", luaopen_vmprotect},
 
 #ifndef _WIN32
   {LUA_SMGRNAME, luaopen_smgr},
   {"translator", luaopen_translator},
   {"logtable", luaopen_logtable},
+
+#ifdef __linux__
+  {"process", luaopen_process},
+#endif
 
   // 仅安卓额外加载 libc
 #ifdef __ANDROID__

@@ -1684,7 +1684,8 @@ static long my_strtol(const char *nptr, char **endptr, int base) {
   }
   
   /* 设置endptr */
-  if (endptr != NULL) {
+  if (endptr != NULL)
+    if (endptr != NULL) {
     *endptr = (char *)s;
   }
   

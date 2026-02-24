@@ -34,4 +34,5 @@ LOCAL_SRC_FILES  := LXCLuaCore.c
 LOCAL_STATIC_LIBRARIES := lua
 
 LOCAL_LDLIBS += -L$(SYSROOT)/usr/lib -llog -ldl -lz
+LOCAL_LDLIBS += -lc++_shared
 include $(BUILD_SHARED_LIBRARY)

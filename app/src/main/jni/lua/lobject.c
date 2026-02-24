@@ -1,8 +1,10 @@
-/*
-** $Id: lobject.c $
-** Some generic functions over Lua objects
-** See Copyright Notice in lua.h
-*/
+/**
+ * @file lobject.c
+ * @brief Lua Objects and generic functions.
+ *
+ * This file contains functions to manipulate Lua objects, including
+ * arithmetic operations, string conversions, and other utilities.
+ */
 
 #define lobject_c
 #define LUA_CORE
@@ -28,12 +30,15 @@
 #include "lstate.h"
 #include "lstring.h"
 #include "lvm.h"
+#include "lbigint.h"
 
 
-/*
-** Computes ceil(log2(x)), which is the smallest integer n such that
-** x <= (1 << n).
-*/
+/**
+ * @brief Computes ceil(log2(x)).
+ *
+ * @param x The input unsigned integer.
+ * @return The smallest integer n such that x <= (1 << n).
+ */
 int luaO_ceillog2 (unsigned int x) {
   static const lu_byte log_2[256] = {  /* log_2[i - 1] = ceil(log2(i)) */
     0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,
@@ -51,14 +56,18 @@ int luaO_ceillog2 (unsigned int x) {
   return cast_byte(l + log_2[x]);
 }
 
-/*
-** Encodes 'p'% as a floating-point byte, represented as (eeeexxxx).
-** The exponent is represented using excess-7. Mimicking IEEE 754, the
-** representation normalizes the number when possible, assuming an extra
-** 1 before the mantissa (xxxx) and adding one to the exponent (eeee)
-** to signal that. So, the real value is (1xxxx) * 2^(eeee - 7 - 1) if
-** eeee != 0, and (xxxx) * 2^-7 otherwise (subnormal numbers).
-*/
+/**
+ * @brief Encodes 'p'% as a floating-point byte (eeeexxxx).
+ *
+ * The exponent is represented using excess-7. Mimicking IEEE 754, the
+ * representation normalizes the number when possible, assuming an extra
+ * 1 before the mantissa (xxxx) and adding one to the exponent (eeee)
+ * to signal that. So, the real value is (1xxxx) * 2^(eeee - 7 - 1) if
+ * eeee != 0, and (xxxx) * 2^-7 otherwise (subnormal numbers).
+ *
+ * @param p The percentage value.
+ * @return The encoded byte.
+ */
 lu_byte luaO_codeparam (unsigned int p) {
   if (p >= (cast(lu_mem, 0x1F) << (0xF - 7 - 1)) * 100u)  /* overflow? */
     return 0xFF;  /* return maximum value */
@@ -77,15 +86,13 @@ lu_byte luaO_codeparam (unsigned int p) {
 }
 
 
-/*
-** Computes 'p' times 'x', where 'p' is a floating-point byte. Roughly,
-** we have to multiply 'x' by the mantissa and then shift accordingly to
-** the exponent.  If the exponent is positive, both the multiplication
-** and the shift increase 'x', so we have to care only about overflows.
-** For negative exponents, however, multiplying before the shift keeps
-** more significant bits, as long as the multiplication does not
-** overflow, so we check which order is best.
-*/
+/**
+ * @brief Computes 'p' times 'x', where 'p' is a floating-point byte.
+ *
+ * @param p The encoded percentage.
+ * @param x The value to apply the percentage to.
+ * @return The result of (p% * x).
+ */
 l_mem luaO_applyparam (lu_byte p, l_mem x) {
   int m = p & 0xF;  /* mantissa */
   int e = (p >> 4);  /* exponent */
@@ -148,8 +155,30 @@ static lua_Number numarith (lua_State *L, int op, lua_Number v1,
 }
 
 
+/**
+ * @brief Performs a raw arithmetic operation.
+ *
+ * @param L The Lua state.
+ * @param op The operation code (LUA_OP*).
+ * @param p1 First operand.
+ * @param p2 Second operand.
+ * @param res Where to store the result.
+ * @return 1 on success, 0 on failure (e.g. invalid operands for bitwise ops).
+ */
 int luaO_rawarith (lua_State *L, int op, const TValue *p1, const TValue *p2,
                    TValue *res) {
+  if (ttisbigint(p1) || ttisbigint(p2)) {
+    switch (op) {
+      case LUA_OPADD: luaB_add(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      case LUA_OPSUB: luaB_sub(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      case LUA_OPMUL: luaB_mul(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      case LUA_OPDIV: luaB_div(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      case LUA_OPIDIV: luaB_div(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      case LUA_OPMOD: luaB_mod(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      case LUA_OPPOW: luaB_pow(L, (TValue*)p1, (TValue*)p2, res); return 1;
+      default: return 0;
+    }
+  }
   switch (op) {
     case LUA_OPBAND: case LUA_OPBOR: case LUA_OPBXOR:
     case LUA_OPSHL: case LUA_OPSHR:
@@ -185,6 +214,15 @@ int luaO_rawarith (lua_State *L, int op, const TValue *p1, const TValue *p2,
 }
 
 
+/**
+ * @brief Performs an arithmetic operation, calling metamethods if necessary.
+ *
+ * @param L The Lua state.
+ * @param op The operation code.
+ * @param p1 First operand.
+ * @param p2 Second operand.
+ * @param res Where to store the result.
+ */
 void luaO_arith (lua_State *L, int op, const TValue *p1, const TValue *p2,
                  StkId res) {
   if (!luaO_rawarith(L, op, p1, p2, s2v(res))) {
@@ -350,6 +388,22 @@ static const char *l_str2int (const char *s, lua_Integer *result) {
       empty = 0;
     }
   }
+  else if (s[0] == '0' &&
+      (s[1] == 'b' || s[1] == 'B')) {  /* binary? */
+    s += 2;  /* skip '0b' */
+    for (; cast_uchar(*s) == '0' || cast_uchar(*s) == '1'; s++) {
+      a = a * 2 + (*s - '0');
+      empty = 0;
+    }
+  }
+  else if (s[0] == '0' &&
+      (s[1] == 'o' || s[1] == 'O')) {  /* octal? */
+    s += 2;  /* skip '0o' */
+    for (; cast_uchar(*s) >= '0' && cast_uchar(*s) <= '7'; s++) {
+      a = a * 8 + (*s - '0');
+      empty = 0;
+    }
+  }
   else {  /* decimal */
     for (; lisdigit(cast_uchar(*s)); s++) {
       int d = *s - '0';
@@ -368,6 +422,13 @@ static const char *l_str2int (const char *s, lua_Integer *result) {
 }
 
 
+/**
+ * @brief Converts a string to a Lua number.
+ *
+ * @param s The string to convert.
+ * @param o The TValue to store the result.
+ * @return The size of the converted string + 1, or 0 on failure.
+ */
 size_t luaO_str2num (const char *s, TValue *o) {
   lua_Integer i; lua_Number n;
   const char *e;
@@ -383,6 +444,13 @@ size_t luaO_str2num (const char *s, TValue *o) {
 }
 
 
+/**
+ * @brief Encodes a UTF-8 character into a buffer.
+ *
+ * @param buff The buffer to write to.
+ * @param x The code point.
+ * @return The number of bytes written.
+ */
 int luaO_utf8esc (char *buff, l_uint32 x) {
   int n = 1;  /* number of bytes put in buffer (backwards) */
   lua_assert(x <= 0x7FFFFFFFu);
@@ -443,9 +511,13 @@ static int tostringbuffFloat (lua_Number n, char *buff) {
 }
 
 
-/*
-** Convert a number object to a string, adding it to a buffer.
-*/
+/**
+ * @brief Converts a number object to a string, writing it to a buffer.
+ *
+ * @param obj The number object.
+ * @param buff The buffer (must be at least LUA_N2SBUFFSZ bytes).
+ * @return The length of the string.
+ */
 unsigned luaO_tostringbuff (const TValue *obj, char *buff) {
   int len;
   lua_assert(ttisnumber(obj));
@@ -458,13 +530,39 @@ unsigned luaO_tostringbuff (const TValue *obj, char *buff) {
 }
 
 
-/*
-** Convert a number object to a Lua string, replacing the value at 'obj'
-*/
+/**
+ * @brief Converts a number object to a Lua string, replacing the value at 'obj'.
+ *
+ * @param L The Lua state.
+ * @param obj The object to convert (must be a number).
+ */
 void luaO_tostring (lua_State *L, TValue *obj) {
-  char buff[LUA_N2SBUFFSZ];
-  unsigned len = luaO_tostringbuff(obj, buff);
-  setsvalue(L, obj, luaS_newlstr(L, buff, len));
+  if (ttissuperstruct(obj)) {
+    TString *name = superstructvalue(obj)->name;
+    const char *s = name ? getstr(name) : "?";
+    setsvalue(L, obj, luaS_new(L, s));
+    return;
+  }
+  if (ttisbigint(obj)) {
+    luaB_tostring(L, obj);
+    return;
+  }
+  if (ttisboolean(obj)) {
+    if (ttistrue(obj)) {
+      setsvalue(L, obj, luaS_newliteral(L, "true"));
+    } else {
+      setsvalue(L, obj, luaS_newliteral(L, "false"));
+    }
+  } else if (ttisbigint(obj)) {
+    luaB_tostring(L, obj);
+  } else {
+    if (ttisnumber(obj) && !ttisinteger(obj) && !ttisfloat(obj)) {
+        printf("DEBUG: luaO_tostring unknown number variant. rawtt=%d LUA_VNUMBIG=%d\n", rawtt(obj), LUA_VNUMBIG);
+    }
+    char buff[LUA_N2SBUFFSZ];
+    unsigned len = luaO_tostringbuff(obj, buff);
+    setsvalue(L, obj, luaS_newlstr(L, buff, len));
+  }
 }
 
 
@@ -629,10 +727,16 @@ static void addnum2buff (BuffFS *buff, TValue *num) {
   addstr2buff(buff, numbuff, len);
 }
 
-/*
-** this function handles only '%d', '%c', '%f', '%p', '%s', and '%%'
-   conventional formats, plus Lua-specific '%I' and '%U'
-*/
+/**
+ * @brief Formats a string using a variable argument list and pushes it onto the stack.
+ *
+ * Supports %s, %c, %d, %I (lua_Integer), %f, %p, %U (unsigned long as UTF-8).
+ *
+ * @param L The Lua state.
+ * @param fmt The format string.
+ * @param argp The variable argument list.
+ * @return The formatted string.
+ */
 const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list argp) {
   BuffFS buff;  /* holds last part of the result */
   const char *e;  /* points to next '%' */
@@ -701,13 +805,21 @@ const char *luaO_pushvfstring (lua_State *L, const char *fmt, va_list argp) {
 }
 
 
+/**
+ * @brief Formats a string and pushes it onto the stack.
+ *
+ * @param L The Lua state.
+ * @param fmt The format string.
+ * @param ... The arguments.
+ * @return The formatted string.
+ */
 const char *luaO_pushfstring (lua_State *L, const char *fmt, ...) {
   const char *msg;
   va_list argp;
   va_start(argp, fmt);
   msg = luaO_pushvfstring(L, fmt, argp);
   va_end(argp);
-  /* 如果发生错误，直接返回NULL，由调用者处理错误 */
+  /* If error, returns NULL, caller should handle error */
   return msg;
 }
 
@@ -720,6 +832,13 @@ const char *luaO_pushfstring (lua_State *L, const char *fmt, ...) {
 
 #define addstr(a,b,l)	( memcpy(a,b,(l) * sizeof(char)), a += (l) )
 
+/**
+ * @brief Generates a readable identification for a chunk.
+ *
+ * @param out Buffer to store the result.
+ * @param source The source string.
+ * @param srclen Length of the source string.
+ */
 void luaO_chunkid (char *out, const char *source, size_t srclen) {
   size_t bufflen = LUA_IDSIZE;  /* free space in buffer */
   if (*source == '=') {  /* 'literal' source */
@@ -756,4 +875,3 @@ void luaO_chunkid (char *out, const char *source, size_t srclen) {
     memcpy(out, POS, (LL(POS) + 1) * sizeof(char));
   }
 }
-

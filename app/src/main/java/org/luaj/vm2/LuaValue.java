@@ -54,6 +54,7 @@ public class LuaValue extends Varargs {
             "lightuserdata",
             "number",
             "string",
+            "struct",
             "table",
             "function",
             "userdata",
@@ -384,6 +385,7 @@ public class LuaValue extends Varargs {
         argerror("double");
         return 0;
     }
+
 
     public int checkint() {
         argerror("int");

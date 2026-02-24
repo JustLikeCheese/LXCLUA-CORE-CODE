@@ -1211,6 +1211,8 @@ public class LuaTextTokenizer {
     protected static void doStaticInit() {
         sKeywords =
                 new String[] {
+                    "async",
+                    "await",
                     "and",
                     "break",
                     "const",
@@ -1226,6 +1228,7 @@ public class LuaTextTokenizer {
                     "goto",
                     "if",
                     "in",
+                    "as",
                     "is",
                     "local",
                     "nil",
@@ -1280,9 +1283,9 @@ public class LuaTextTokenizer {
                     "extends",
                     "final",
                     "implements",
-                    "ointerface",
-                    "onew",
-                    "osuper",
+                    "interface",
+                    "new",
+                    "super",
                     "private",
                     "protected",
                     "public",
@@ -1295,9 +1298,27 @@ public class LuaTextTokenizer {
                     "loadfile",
                     "rawlen",
                     "debug",
-                    "package"
+                    "package",
+                    "export",
+                    "defer",
+                    "struct",
+                    "superstruct",
+                    "concept",
+                    "namespace",
+                    "using",
+                    "requires",
+                    "bool",
+                    "char",
+                    "double",
+                    "float",
+                    "int",
+                    "long",
+                    "void",
+                    "asm"
                 };
         Tokens[] sTokens = {
+            Tokens.ASYNC,
+            Tokens.AWAIT,
             Tokens.AND,
             Tokens.BREAK,
             Tokens.CONST,
@@ -1313,6 +1334,7 @@ public class LuaTextTokenizer {
             Tokens.GOTO,
             Tokens.IF,
             Tokens.IN,
+            Tokens.AS,
             Tokens.IS,
             Tokens.LOCAL,
             Tokens.NIL,
@@ -1382,7 +1404,23 @@ public class LuaTextTokenizer {
             Tokens.LOADFILE,
             Tokens.RAWLEN,
             Tokens.DEBUG,
-            Tokens.PACKAGE
+            Tokens.PACKAGE,
+            Tokens.EXPORT,
+            Tokens.DEFER,
+            Tokens.STRUCT,
+            Tokens.SUPERSTRUCT,
+            Tokens.CONCEPT,
+            Tokens.NAMESPACE,
+            Tokens.USING,
+            Tokens.REQUIRES,
+            Tokens.BOOL,
+            Tokens.CHAR,
+            Tokens.DOUBLE,
+            Tokens.FLOAT,
+            Tokens.TYPE_INT,
+            Tokens.LONG,
+            Tokens.VOID,
+            Tokens.OPERATOR_KW
         };
         keywords = new TrieTree<>();
         for (int i = 0; i < sKeywords.length; i++) {

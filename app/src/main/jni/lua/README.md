@@ -4,163 +4,364 @@
 [![C Standard](https://img.shields.io/badge/C-C23-blue.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-Cross--Platform-green.svg)]()
 
-[English](README_EN.md) | 中文
+A high-performance embedded scripting engine based on **Lua 5.5 (Custom)** with enhanced security features, extended libraries, and optimized bytecode compilation.
 
-基于 **Lua 5.5 (Custom)** 深度定制的高性能嵌入式脚本引擎，提供增强的安全特性、扩展库支持和优化的字节码编译。
+[中文文档 (Chinese Documentation)](README_CN.md)
 
-## 测试平台
+---
 
-| 平台 | 状态 | 字节码互通 |
-|------|------|-----------|
-| Windows (MinGW) | ✅ 通过 | ✅ |
-| Arch Linux | ✅ 通过 | ✅ |
-| Ubuntu | ✅ 通过 | ✅ |
-| Android (Termux) | ✅ 通过 | ✅ |
-| Android (LXCLUA JNI) | ✅ 通过 | ✅ |
+## Features
 
-## 特性
+### Core Enhancements
 
-### 核心增强
+- **Secure Compilation**: Dynamic OPcode mapping, timestamp encryption, SHA-256 integrity verification.
+- **Custom VM**: Implements XCLUA instruction set with optimized dispatch.
+- **Syntax Extensions**: Modern language features including Classes, Switch, Try-Catch, Arrow Functions, Pipe Operators, and more.
+- **Shell-like Conditions**: Built-in support for shell-style test expressions (e.g., `[ -f "file.txt" ]`).
 
-- **安全编译** - 字节码采用动态 OPcode 映射、时间戳加密、SHA-256 完整性验证
-- **PNG 封装** - 编译后的字节码嵌入 PNG 图像格式，增强混淆效果
-- **防逆向保护** - 多层加密机制有效防止字节码被反编译或篡改
+### Extension Modules
 
-### 扩展模块
+| Module | Description |
+|--------|------------------------|
+| `json` | Built-in JSON parsing/serialization |
+| `lclass` | OOP support (classes, inheritance, interfaces) |
+| `lbitlib` | Bitwise operations |
+| `lboolib` | Boolean enhancements |
+| `ludatalib` | Binary data serialization |
+| `lsmgrlib` | Memory management utilities |
+| `process` | Process management (Linux only) |
+| `http` | HTTP client/server & Socket |
+| `thread` | Multithreading support |
+| `fs` | File system operations |
+| `struct` | C-style structs & arrays |
 
-| 模块 | 功能描述 |
-|------|----------|
-| `json` | 内置 JSON 解析与序列化支持 |
-| `sha256` | SHA-256 哈希计算 |
-| `lclass` | 面向对象编程支持（类、继承、多态） |
-| `lbitlib` | 位运算库 |
-| `lboolib` | 布尔类型增强 |
-| `ludatalib` | 二进制数据序列化 |
-| `lsmgrlib` | 内存管理工具 |
-| `ltranslator` | 代码翻译器 |
-| `logtable` | 日志表支持 |
-| `lptrlib` | 指针操作库 |
-| `lvmlib` | 虚拟机扩展接口 |
+---
 
-### 编译优化
+## Syntax Extensions
 
-- 使用 C23 标准编译
-- LTO（链接时优化）
-- 循环展开与严格别名分析
-- 去除调试符号，最小化二进制体积
+LXCLUA-NCore introduces modern language features to extend Lua 5.5.
 
-## 系统要求
+### 1. Extended Operators
 
-- **编译器**: GCC（支持 C11/C23 标准）
-- **平台**: Windows (MinGW) / Linux / Android (Termux)
+Supports compound assignments, increment/decrement, spaceship operator, null coalescing, optional chaining, pipe operators, and walrus operator.
 
-## 快速开始
+```lua
+-- Compound Assignment & Increment
+local a = 10
+a += 5          -- a = 15
+a++             -- a = 16
 
-### 编译
+-- Spaceship Operator (-1, 0, 1)
+local cmp = 10 <=> 20  -- -1
+
+-- Null Coalescing
+local val = nil
+local res = val ?? "default"  -- "default"
+
+-- Optional Chaining
+local config = { server = { port = 8080 } }
+local port = config?.server?.port  -- 8080
+local timeout = config?.client?.timeout  -- nil
+
+-- Pipe Operator
+local function double(x) return x * 2 end
+local result = 10 |> double  -- 20
+
+-- Safe Pipe (skips if nil)
+local maybe_nil = nil
+local _ = maybe_nil |?> print  -- (does nothing)
+
+-- Walrus Operator (Assignment Expression)
+local x
+if (x := 100) > 50 then
+    print(x) -- 100
+end
+```
+
+### 2. Enhanced Strings
+
+- **Interpolation**: `${var}` or `${[expr]}` inside strings.
+- **Raw Strings**: Prefixed with `_raw`, ignores escape sequences.
+
+```lua
+local name = "World"
+print("Hello, ${name}!")  -- Hello, World!
+
+local calc = "1 + 1 = ${[1+1]}"  -- 1 + 1 = 2
+
+local path = _raw"C:\Windows\System32"
+```
+
+### 3. Function Features
+
+Supports arrow functions, lambdas, C-style definitions, generics, and async/await.
+
+```lua
+-- Arrow Function
+local add = (a, b) => a + b
+local log = ->(msg) { print("[LOG]: " .. msg) }
+
+-- Lambda Expression
+local sq = lambda(x): x * x
+
+-- C-style Function
+int sum(int a, int b) {
+    return a + b;
+}
+
+-- Generic Function
+local function Factory(T)(val)
+    return { type = T, value = val }
+end
+local obj = Factory("int")(99)
+
+-- Async/Await
+async function fetchData(url)
+    -- local data = await http.get(url) -- (Requires async runtime)
+    return "data"
+end
+```
+
+### 4. Object-Oriented Programming (OOP)
+
+Complete class and interface system with modifiers (`private`, `public`, `static`, `final`, `abstract`, `sealed`) and properties (`get`/`set`).
+
+```lua
+interface Drawable
+    function draw(self)
+end
+
+class Shape implements Drawable
+    function draw(self)
+        -- abstract-like behavior
+    end
+end
+
+-- Sealed Class (cannot be extended)
+sealed class Circle extends Shape
+    private _radius = 0
+
+    function __init__(self, r)
+        self._radius = r
+    end
+
+    -- Property with Getter/Setter
+    get radius(self)
+        return self._radius
+    end
+
+    set radius(self, v)
+        if v >= 0 then self._radius = v end
+    end
+
+    function draw(self)
+        super.draw(self)
+        return "Drawing circle: " .. self._radius
+    end
+
+    static function create(r)
+        return new Circle(r)
+    end
+end
+
+local c = Circle.create(10)
+c.radius = 20
+print(c.radius)  -- 20
+```
+
+### 5. Structs & Types
+
+```lua
+-- Struct
+struct Point {
+    int x;
+    int y;
+}
+local p = Point()
+p.x = 10
+
+-- Concept (Type Predicate)
+concept IsPositive(x)
+    return x > 0
+end
+-- Or single expression form
+concept IsEven(x) = x % 2 == 0
+
+-- SuperStruct (Enhanced Table Definition)
+superstruct MetaPoint [
+    x: 0,
+    y: 0,
+    ["move"]: function(self, dx, dy)
+        self.x = self.x + dx
+        self.y = self.y + dy
+    end
+]
+
+-- Enum
+enum Color {
+    Red,
+    Green,
+    Blue = 10
+}
+
+-- Destructuring
+local data = { x = 1, y = 2 }
+local take { x, y } = data
+```
+
+### 6. Control Flow
+
+```lua
+-- Switch Statement
+switch (val) do
+    case 1:
+        print("One")
+        break
+    default:
+        print("Other")
+end
+
+-- When Statement (Pattern Matching)
+do
+    when x == 1
+        print("x is 1")
+    case x == 10
+        print("x is 10")
+    else
+        print("other")
+end
+
+-- Try-Catch-Finally
+try
+    error("Error")
+catch(e)
+    print("Caught: " .. e)
+finally
+    print("Cleanup")
+end
+
+-- Defer
+defer do print("Executes at scope exit") end
+
+-- With Statement
+local ctx = { val = 10 }
+with (ctx) {
+    print(val) -- 10
+}
+
+-- Namespace & Using
+namespace MyLib {
+    function test() return "test" end
+}
+using namespace MyLib; -- Import all
+-- using MyLib::test;  -- Import specific member
+```
+
+### 7. Shell-like Tests
+
+Built-in conditional tests using `[ ... ]` syntax.
+
+```lua
+if [ -f "config.lua" ] then
+    print("Config file exists")
+end
+
+if [ "a" == "a" ] then
+    print("Strings match")
+end
+
+if [ 10 -gt 5 ] then
+    print("10 > 5")
+end
+```
+
+### 8. Metaprogramming & Macros
+
+```lua
+-- Custom Command
+command echo(msg)
+    print(msg)
+end
+echo "Hello World"
+
+-- Custom Operator
+operator ++ (x)
+    return x + 1
+end
+-- Call with $$ prefix
+local res = $$++(10)
+
+-- Preprocessor Directives
+$define DEBUG 1
+$alias CONST_VAL = 100
+$type MyInt = int
+
+$if DEBUG
+    print("Debug mode")
+$else
+    print("Release mode")
+$end
+
+$declare g_var: MyInt
+
+-- Object Macro
+local x = 10
+local obj = $object(x) -- {x=10}
+```
+
+### 9. Inline ASM
+
+Write VM instructions directly. Use `newreg` to allocate registers safely.
+Supports pseudo-instructions like `rep`, `_if`, `_print`.
+
+```lua
+asm(
+    newreg r0
+    LOADI r0 100
+
+    -- Compile-time loop
+    rep 5 {
+        ADDI r0 r0 1
+    }
+
+    -- Conditional assembly
+    _if 1
+       _print "Compiling this block"
+    _endif
+
+    -- Embedding data
+    -- db 1, 2, 3, 4
+    -- str "RawData"
+
+    RETURN1 r0
+)
+```
+
+---
+
+## Build & Test
+
+### Build
 
 ```bash
-# Windows (MinGW)
-make mingw
-
 # Linux
 make linux
 
-# Android (Termux)
-make termux
+# Windows (MinGW)
+make mingw
 ```
 
-### 验证安装
+### Verification
+
+Run the test suite to verify all features:
 
 ```bash
-make test
+./lxclua tests/verify_docs_full.lua
+./lxclua tests/test_parser_features.lua
+./lxclua tests/test_advanced_parser.lua
 ```
 
-### 清理构建
+## License
 
-```bash
-make clean
-```
-
-## 构建产物
-
-| 文件 | 描述 |
-|------|------|
-| `liblua.a` / `lua55.dll` | Lua 静态库 / 动态库 |
-| `lua` / `lua.exe` | Lua 解释器 |
-| `luac` / `luac.exe` | Lua 字节码编译器 |
-
-## 使用示例
-
-### 运行 Lua 脚本
-
-```bash
-./lua script.lua
-```
-
-### 编译为字节码
-
-```bash
-./luac -o output.luac script.lua
-```
-
-### 嵌入到 C/C++ 项目
-
-```c
-#include "lua.h"
-#include "lauxlib.h"
-#include "lualib.h"
-
-int main() {
-    lua_State *L = luaL_newstate();
-    luaL_openlibs(L);
-    
-    luaL_dofile(L, "script.lua");
-    
-    lua_close(L);
-    return 0;
-}
-```
-
-## 项目结构
-
-```
-.
-├── l*.c / l*.h      # Lua 核心源码
-├── json_parser.*    # JSON 解析模块
-├── sha256.*         # SHA-256 哈希模块
-├── lclass.*         # 面向对象类系统
-├── stb_image*.h     # 图像处理（stb 库）
-├── Makefile         # 构建脚本
-└── lua/             # 子版本（次逻辑）
-```
-
-## 安全说明
-
-本项目的字节码编译采用多重安全机制：
-
-1. **动态 OPcode 映射** - 每次编译生成唯一的指令映射表
-2. **时间戳加密** - 使用编译时间作为加密密钥
-3. **SHA-256 验证** - 确保字节码完整性
-4. **PNG 图像封装** - 将加密数据嵌入图像格式
-
-> 注意：这些保护措施旨在增加逆向工程难度，但不能保证绝对安全。
-
-## 许可证
-
-本项目基于 [MIT 许可证](LICENSE) 开源。
-
-Lua 原始代码版权归 PUC-Rio 所有，详见 [Lua License](https://www.lua.org/license.html)。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request。请参阅 [贡献指南](CONTRIBUTING.md)。
-
-## 联系方式
-
-- **邮箱**: difierline@yeah.net
-- **GitHub**: https://github.com/OxenFxc/LXCLUA-NCORE
-
-## 致谢
-
-- [Lua](https://www.lua.org/) - 原始 Lua 语言
-- [stb](https://github.com/nothings/stb) - 单头文件图像处理库
+[MIT License](LICENSE).
+Lua original code Copyright © PUC-Rio.

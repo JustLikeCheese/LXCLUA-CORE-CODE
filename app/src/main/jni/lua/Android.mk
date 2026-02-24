@@ -2,7 +2,7 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := lua
-LOCAL_CFLAGS := -std=c23 -O3 -flto \
+LOCAL_CFLAGS := -std=c23 -O3 \
                 -funroll-loops -fomit-frame-pointer \
                 -ffunction-sections -fdata-sections \
                 -fstrict-aliasing
@@ -16,8 +16,10 @@ LOCAL_CFLAGS += -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tabl
 LOCAL_SRC_FILES := \
     aes.c\
     crc.c\
+    lfs.c\
 	lapi.c \
 	lauxlib.c \
+	lbigint.c\
 	lbaselib.c \
 	lboolib.c \
 	lclass.c \
@@ -44,6 +46,7 @@ LOCAL_SRC_FILES := \
 	lstring.c \
 	lstrlib.c \
 	ltable.c \
+	libhttp.c\
 	ltablib.c \
 	ltm.c \
 	lua.c \
@@ -55,11 +58,18 @@ LOCAL_SRC_FILES := \
 	lvmlib.c \
 	lvm.c \
 	lzio.c \
+	lnamespace.c\
+	lthread.c \
+	lthreadlib.c \
+	lproclib.c\
 	lptrlib.c \
 	lsmgrlib.c \
 	llibc.c \
+	lvmpro.c\
 	logtable.c \
 	json_parser.c \
+	lsuper.c\
+	lstruct.c \
 	sha256.c \
 	lobfuscate.c
 

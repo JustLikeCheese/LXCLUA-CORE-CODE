@@ -25,6 +25,7 @@
 #include "ltable.h"
 #include "ltm.h"
 #include "lvm.h"
+#include "lstruct.h"
 
 
 /*
@@ -32,6 +33,22 @@
 ** 内部辅助函数
 ** =====================================================================
 */
+
+static TValue *index2value_helper (lua_State *L, int idx) {
+  CallInfo *ci = L->ci;
+  if (idx > 0) {
+    StkId o = ci->func.p + idx;
+    api_check(L, idx <= ci->top.p - (ci->func.p + 1), "unacceptable index");
+    if (o >= L->top.p) return &G(L)->nilvalue;
+    else return s2v(o);
+  }
+  else if (idx == LUA_REGISTRYINDEX)
+    return &G(L)->l_registry;
+  else {
+      /* assume upvalue or other pseudo indices not handled here for now in lclass */
+      return &G(L)->nilvalue;
+  }
+}
 
 /*
 ** 获取绝对栈索引
@@ -1582,6 +1599,13 @@ int luaC_instanceof(lua_State *L, int obj_idx, int class_idx) {
   obj_idx = absindex(L, obj_idx);
   class_idx = absindex(L, class_idx);
   
+  if (lua_type(L, obj_idx) == LUA_TSTRUCT) {
+      const TValue *o = index2value_helper(L, obj_idx);
+      const TValue *c = index2value_helper(L, class_idx);
+      if (structvalue(o)->def == hvalue(c)) return 1;
+      return 0;
+  }
+
   /* 检查是否是对象 */
   if (!luaC_isobject(L, obj_idx)) {
     return 0;
@@ -2301,7 +2325,7 @@ int luaC_verify_abstracts(lua_State *L, int class_idx) {
     }
     
     /* 验证参数数量是否匹配 */
-    if (expected_params >= 0 && actual_params != expected_params) {
+    if (expected_params >= 0 && actual_params != expected_params && actual_params != expected_params + 1) {
       const char *classname = get_class_name_str(L, class_idx);
       const char *methodname = lua_tostring(L, -1);
       luaL_error(L, "类 '%s' 的方法 '%s' 参数数量不匹配: 期望 %d 个参数，实际 %d 个参数", 
@@ -2394,7 +2418,14 @@ int luaC_verify_interfaces(lua_State *L, int class_idx) {
     int iface_idx = lua_gettop(L);
     
     /* 获取接口名（用于错误消息） */
-    const char *iface_name = get_class_name_str(L, iface_idx);
+    const char *tmp_name = get_class_name_str(L, iface_idx);
+    char iface_name[256];
+    if (tmp_name) {
+      strncpy(iface_name, tmp_name, sizeof(iface_name));
+      iface_name[sizeof(iface_name) - 1] = '\0';
+    } else {
+      strcpy(iface_name, "?");
+    }
     
     /* 获取接口的方法表 */
     lua_pushstring(L, CLASS_KEY_METHODS);
@@ -2417,17 +2448,17 @@ int luaC_verify_interfaces(lua_State *L, int class_idx) {
           const char *classname = get_class_name_str(L, class_idx);
           const char *methodname = lua_tostring(L, -1);
           luaL_error(L, "类 '%s' 必须实现接口 '%s' 的方法 '%s'", 
-                     classname, iface_name ? iface_name : "?",
+                     classname, iface_name,
                      methodname ? methodname : "?");
           return 0;
         }
         
         /* 验证参数数量是否匹配 */
-        if (expected_params >= 0 && actual_params != expected_params) {
+        if (expected_params >= 0 && actual_params != expected_params && actual_params != expected_params + 1) {
           const char *classname = get_class_name_str(L, class_idx);
           const char *methodname = lua_tostring(L, -1);
           luaL_error(L, "类 '%s' 实现接口 '%s' 的方法 '%s' 参数数量不匹配: 期望 %d 个参数，实际 %d 个参数", 
-                     classname, iface_name ? iface_name : "?",
+                     classname, iface_name,
                      methodname ? methodname : "?", 
                      expected_params, actual_params);
           return 0;

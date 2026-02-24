@@ -15,11 +15,11 @@ function _M.hanziToPinyin(str)
       ["ḿ"] = "m", ["m̀"] = "m",
     }
     local result = ""
-    for char in utf8.gmatch(input, ".[\128-\191]*") do
-      if pinyin[char] then
-        result = result .. pinyin[char]
+    for charx in utf8.gmatch(input, ".[\128-\191]*") do
+      if pinyin[charx] then
+        result = result .. pinyin[charx]
        else
-        result = result .. char
+        result = result .. charx
       end
     end
     return result

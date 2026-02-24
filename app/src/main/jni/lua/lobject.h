@@ -15,6 +15,7 @@
 #include "llimits.h"
 #include <stdint.h>
 #include "lua.h"
+#include "lthread.h"
 
 
 /*
@@ -44,16 +45,19 @@
 
 
 
-/*
-** Union of all Lua values
-*/
+/**
+ * @brief Union of all Lua values.
+ */
 typedef union Value {
-  struct GCObject *gc;    /* collectable objects */
-  void *p;         /* light userdata */
-  void *ptr;       /* 真正的指针类型 */
-  lua_CFunction f; /* light C functions */
-  lua_Integer i;   /* integer numbers */
-  lua_Number n;    /* float numbers */
+  struct GCObject *gc;    /**< collectable objects */
+  void *p;         /**< light userdata */
+  void *ptr;       /**< raw pointer type */
+  struct Struct *struct_; /**< struct values */
+  struct SuperStruct *superstruct; /**< superstruct objects */
+  struct Namespace *ns;   /**< namespace objects */
+  lua_CFunction f; /**< light C functions */
+  lua_Integer i;   /**< integer numbers */
+  lua_Number n;    /**< float numbers */
   /* not used, but may avoid warnings for uninitialized value */
   lu_byte ub;
 } Value;
@@ -121,10 +125,15 @@ typedef struct TValue {
 
 
 /* main macro to copy values (from 'obj2' to 'obj1') */
+/* Modified to support struct deep copy */
 #define setobj(L,obj1,obj2) \
-	{ TValue *io1=(obj1); const TValue *io2=(obj2); \
-          io1->value_ = io2->value_; settt_(io1, io2->tt_); \
-	  checkliveness(L,io1); lua_assert(!isnonstrictnil(io1)); }
+  { TValue *io1=(obj1); const TValue *io2=(obj2); \
+    if (l_unlikely(ttisstruct(io2))) { \
+       luaS_copystruct(L, io1, io2); \
+    } else { \
+       io1->value_ = io2->value_; settt_(io1, io2->tt_); \
+       checkliveness(L,io1); lua_assert(!isnonstrictnil(io1)); \
+    } }
 
 /*
 ** Different types of assignments, according to source and destination.
@@ -143,14 +152,11 @@ typedef struct TValue {
 #define setobj2t	setobj
 
 
-/*
-** Entries in a Lua stack. Field 'tbclist' forms a list of all
-** to-be-closed variables active in this stack. Dummy entries are
-** used when the distance between two tbc variables does not fit
-** in an unsigned short. They are represented by delta==0, and
-** their real delta is always the maximum value that fits in
-** that field.
-*/
+/**
+ * @brief Entries in a Lua stack.
+ *
+ * Field 'tbclist' forms a list of all to-be-closed variables active in this stack.
+ */
 typedef union StackValue {
   TValue val;
   struct {
@@ -160,7 +166,7 @@ typedef union StackValue {
 } StackValue;
 
 
-/* index to stack elements */
+/** Index to stack elements */
 typedef StackValue *StkId;
 
 
@@ -300,14 +306,16 @@ typedef union {
 ** ========================================================
 */
 
-/*
-** Common Header for all collectable objects (in macro form, to be
-** included in other objects)
-*/
+/**
+ * @brief Common Header for all collectable objects.
+ * Included in other objects via macro.
+ */
 #define CommonHeader	struct GCObject *next; lu_byte tt; lu_byte marked
 
 
-/* Common type for all collectable objects */
+/**
+ * @brief Common type for all collectable objects.
+ */
 typedef struct GCObject {
   CommonHeader;
 } GCObject;
@@ -341,13 +349,16 @@ typedef struct GCObject {
 /* Variant tags for numbers */
 #define LUA_VNUMINT	makevariant(LUA_TNUMBER, 0)  /* integer numbers */
 #define LUA_VNUMFLT	makevariant(LUA_TNUMBER, 1)  /* float numbers */
+#define LUA_VNUMBIG	99 /* big numbers: 3 | (2<<4) | 64 */
 
 #define ttisnumber(o)		checktype((o), LUA_TNUMBER)
 #define ttisfloat(o)		checktag((o), LUA_VNUMFLT)
 #define ttisinteger(o)		checktag((o), LUA_VNUMINT)
+#define ttisbigint(o)		checktag((o), LUA_VNUMBIG)
 
 #define nvalue(o)	check_exp(ttisnumber(o), \
-	(ttisinteger(o) ? cast_num(ivalue(o)) : fltvalue(o)))
+	(ttisinteger(o) ? cast_num(ivalue(o)) : \
+	(ttisbigint(o) ? luaB_bigtonumber(o) : fltvalue(o))))
 #define fltvalue(o)	check_exp(ttisfloat(o), val_(o).n)
 #define ivalue(o)	check_exp(ttisinteger(o), val_(o).i)
 
@@ -366,7 +377,35 @@ typedef struct GCObject {
 #define chgivalue(obj,x) \
   { TValue *io=(obj); lua_assert(ttisinteger(io)); val_(io).i=(x); }
 
+#define setbigvalue(L,obj,x) \
+  { TValue *io = (obj); TBigInt *x_ = (x); \
+    val_(io).gc = obj2gco(x_); settt_(io, LUA_VNUMBIG); \
+    checkliveness(L,io); }
+
+#define bigvalue(o)	check_exp(ttisbigint(o), gco2big(val_(o).gc))
+
 /* }======================================================= */
+
+
+/*
+** {=======================================================
+** Big Integers
+** ========================================================
+*/
+
+/**
+ * @brief Big Integer structure.
+ */
+typedef struct TBigInt {
+  CommonHeader;
+  unsigned int len;  /**< Number of limbs. */
+  int sign;          /**< 1 or -1. */
+  l_uint32 buff[1];  /**< Limbs (little endian). */
+} TBigInt;
+
+#define gco2big(o)	check_exp((o)->tt == LUA_VNUMBIG, (TBigInt*)(o))
+
+LUAI_FUNC lua_Number luaB_bigtonumber (const TValue *obj);
 
 
 /*
@@ -405,26 +444,41 @@ typedef struct GCObject {
 #define LSTRMEM		-3  /* external long string with deallocation */
 
 
-/*
-** Header for a string value.
-*/
+/**
+ * @brief Header for a string value.
+ */
 typedef struct TString {
   CommonHeader;
-  lu_byte extra;  /* reserved words for short strings; "has hash" for longs */
-  lu_byte shrlen;  /* length for short strings, 0xFF for long strings */
-  unsigned int hash;
+  lu_byte extra;  /**< Reserved words for short strings; "has hash" for longs. */
+  lu_byte shrlen;  /**< Length for short strings, 0xFF for long strings. */
+  unsigned int hash; /**< Hash code. */
   union {
-    size_t lnglen;  /* length for long strings */
-    struct TString *hnext;  /* linked list for hash table */
+    size_t lnglen;  /**< Length for long strings. */
+    struct TString *hnext;  /**< Linked list for hash table. */
   } u;
-  char contents[1];
-  lua_Alloc falloc;  /* deallocation function for external strings */
-  void *ud;  /* user data for external strings */
+  char contents[1]; /**< String data. */
 } TString;
 
+/**
+ * @brief Header for an external string value.
+ */
+typedef struct TExternalString {
+  CommonHeader;
+  lu_byte extra;  /**< Reserved words for short strings; "has hash" for longs. */
+  lu_byte shrlen;  /**< Length for short strings, 0xFF for long strings. */
+  unsigned int hash; /**< Hash code. */
+  union {
+    size_t lnglen;  /**< Length for long strings. */
+    struct TString *hnext;  /**< Linked list for hash table. */
+  } u;
+  const char *src; /**< Pointer to string data. */
+  lua_Alloc falloc;  /**< Deallocation function for external strings. */
+  void *ud;  /**< User data for external strings. */
+} TExternalString;
 
-#define strisshr(ts)	((ts)->shrlen >= 0)
-#define isextstr(ts)	(ttislngstring(ts) && tsvalue(ts)->shrlen != LSTRREG)
+
+#define strisshr(ts)	((ts)->tt == LUA_VSHRSTR)
+#define isextstr(ts)	((ts)->tt == LUA_VLNGSTR && (ts)->shrlen != (lu_byte)LSTRREG)
 
 /*
 ** Get the actual string (array of bytes) from a 'TString'. (Generic
@@ -432,8 +486,8 @@ typedef struct TString {
 */
 #define rawgetshrstr(ts)  (cast_charp(&(ts)->contents))
 #define getshrstr(ts)	check_exp(strisshr(ts), rawgetshrstr(ts))
-#define getlngstr(ts)	check_exp(!strisshr(ts), (ts)->contents)
-#define getstr(ts) 	(strisshr(ts) ? rawgetshrstr(ts) : (ts)->contents)
+#define getlngstr(ts)	check_exp(!strisshr(ts), (isextstr(ts) ? ((TExternalString*)(ts))->src : (ts)->contents))
+#define getstr(ts) 	(strisshr(ts) ? rawgetshrstr(ts) : getlngstr(ts))
 
 
 /* get string length from 'TString *s' */
@@ -445,6 +499,43 @@ typedef struct TString {
 	(strisshr(ts) \
 	? (cast_void((len) = cast_sizet((ts)->shrlen)), rawgetshrstr(ts)) \
 	: (cast_void((len) = (ts)->u.lnglen), (ts)->contents))
+
+/* }======================================================= */
+
+
+/*
+** {=======================================================
+** Structs
+** ========================================================
+*/
+
+#define LUA_VSTRUCT	makevariant(LUA_TSTRUCT, 0)
+
+#define ttisstruct(o)		checktag((o), ctb(LUA_VSTRUCT))
+
+#define structvalue(o)	check_exp(ttisstruct(o), gco2struct(val_(o).gc))
+
+/**
+ * @brief Struct object structure.
+ */
+typedef struct Struct {
+  CommonHeader;
+  struct Table *def;    /**< Struct definition (type info). */
+  int *gc_offsets;      /**< GC offsets array. */
+  int n_gc_offsets;     /**< Number of GC offsets. */
+  size_t data_size;     /**< Size of the data block. */
+  struct GCObject *parent; /**< Parent object (if this is a view). */
+  lu_byte *data;        /**< Pointer to data. */
+  union {
+    LUAI_MAXALIGN;
+    lu_byte d[1];
+  } inline_data;        /**< Inline data block. */
+} Struct;
+
+#define gco2struct(o)	check_exp((o)->tt == LUA_VSTRUCT, &((cast_u(o) - offsetof(Struct, next))->struct_))
+
+/* function to copy structs */
+LUAI_FUNC void luaS_copystruct (lua_State *L, TValue *dest, const TValue *src);
 
 /* }======================================================= */
 
@@ -496,35 +587,31 @@ typedef union UValue {
 } UValue;
 
 
-/*
-** Header for userdata with user values;
-** memory area follows the end of this structure.
-*/
+/**
+ * @brief Header for userdata with user values.
+ * memory area follows the end of this structure.
+ */
 typedef struct Udata {
   CommonHeader;
-  unsigned short nuvalue;  /* number of user values */
-  size_t len;  /* number of bytes */
-  struct Table *metatable;
-  GCObject *gclist;
-  UValue uv[1];  /* user values */
+  unsigned short nuvalue;  /**< Number of user values. */
+  size_t len;  /**< Number of bytes. */
+  struct GCObject *metatable; /**< Metatable. */
+  GCObject *gclist; /**< Garbage collector list. */
+  UValue uv[1];  /**< User values. */
 } Udata;
 
 
-/*
-** Header for userdata with no user values. These userdata do not need
-** to be gray during GC, and therefore do not need a 'gclist' field.
-** To simplify, the code always use 'Udata' for both kinds of userdata,
-** making sure it never accesses 'gclist' on userdata with no user values.
-** This structure here is used only to compute the correct size for
-** this representation. (The 'bindata' field in its end ensures correct
-** alignment for binary data following this header.)
-*/
+/**
+ * @brief Header for userdata with no user values.
+ *
+ * These userdata do not need to be gray during GC, and therefore do not need a 'gclist' field.
+ */
 typedef struct Udata0 {
   CommonHeader;
-  unsigned short nuvalue;  /* number of user values */
-  size_t len;  /* number of bytes */
-  struct Table *metatable;
-  union {LUAI_MAXALIGN;} bindata;
+  unsigned short nuvalue;  /**< Number of user values. */
+  size_t len;  /**< Number of bytes. */
+  struct GCObject *metatable; /**< Metatable. */
+  union {LUAI_MAXALIGN;} bindata; /**< Data. */
 } Udata0;
 
 
@@ -554,41 +641,34 @@ typedef struct Udata0 {
 typedef l_uint64 Instruction;
 
 
-/*
-** Description of an upvalue for function prototypes
-*/
+/**
+ * @brief Description of an upvalue for function prototypes.
+ */
 typedef struct Upvaldesc {
-  TString *name;  /* upvalue name (for debug information) */
-  lu_byte instack;  /* whether it is in stack (register) */
-  lu_byte idx;  /* index of upvalue (in stack or in outer function's list) */
-  lu_byte kind;  /* kind of corresponding variable */
+  TString *name;  /**< Upvalue name (for debug information). */
+  lu_byte instack;  /**< Whether it is in stack (register). */
+  lu_byte idx;  /**< Index of upvalue (in stack or in outer function's list). */
+  lu_byte kind;  /**< Kind of corresponding variable. */
 } Upvaldesc;
 
 
-/*
-** Description of a local variable for function prototypes
-** (used for debug information)
-*/
+/**
+ * @brief Description of a local variable for function prototypes.
+ * (used for debug information)
+ */
 typedef struct LocVar {
-  TString *varname;
-  int startpc;  /* first point where variable is active */
-  int endpc;    /* first point where variable is dead */
+  TString *varname; /**< Variable name. */
+  int startpc;  /**< First point where variable is active. */
+  int endpc;    /**< First point where variable is dead. */
 } LocVar;
 
 
-/*
-** Associates the absolute line source for a given instruction ('pc').
-** The array 'lineinfo' gives, for each instruction, the difference in
-** lines from the previous instruction. When that difference does not
-** fit into a byte, Lua saves the absolute line for that instruction.
-** (Lua also saves the absolute line periodically, to speed up the
-** computation of a line number: we can use binary search in the
-** absolute-line array, but we must traverse the 'lineinfo' array
-** linearly to compute a line.)
-*/
+/**
+ * @brief Associates the absolute line source for a given instruction ('pc').
+ */
 typedef struct AbsLineInfo {
-  int pc;
-  int line;
+  int pc;   /**< Instruction index. */
+  int line; /**< Line number. */
 } AbsLineInfo;
 
 
@@ -616,12 +696,18 @@ typedef struct AbsLineInfo {
 
 #define MAX_CALL_ARGS 64
 
+/**
+ * @brief Call queue node.
+ */
 typedef struct CallNode {
   int nargs;
   TValue args[MAX_CALL_ARGS];
   struct CallNode *next;
 } CallNode;
 
+/**
+ * @brief Call queue.
+ */
 typedef struct {
   CallNode *head;
   CallNode *tail;
@@ -642,33 +728,35 @@ LUAI_FUNC int luaF_callqueuepop (lua_State *L, CallQueue *q, int *nargs, TValue 
  */
 typedef struct Proto {
   CommonHeader;
+  Instruction *code;  /**< Opcodes (bytecode). */
+  TValue *k;  /**< Constants used by the function. */
+  struct Proto **p;  /**< Functions defined inside this function. */
   lu_byte numparams;  /**< Number of fixed (named) parameters. */
-  lu_byte flag;
-  lu_byte is_vararg;
+  lu_byte flag;       /**< Flags. */
+  lu_byte is_vararg;  /**< Vararg flag. */
   lu_byte maxstacksize;  /**< Number of registers needed by this function. */
-  lu_byte difierline_mode;      /**< Obfuscation mode flags. */
+  lu_byte nodiscard;     /**< Function is marked as nodiscard. */
+  unsigned int difierline_mode;      /**< Obfuscation mode flags. */
+  int difierline_pad;      /**< Padding for obfuscation. */
   int difierline_magicnum;      /**< Magic number for identification. */
   uint64_t difierline_data;      /**< Extra data for obfuscation. */
   int sizeupvalues;  /**< Size of 'upvalues' array. */
   int sizek;  /**< Size of 'k' (constants) array. */
   int sizecode;      /**< Size of 'code' array. */
-  int sizelineinfo;
+  int sizelineinfo; /**< Size of 'lineinfo' array. */
   int sizep;  /**< Size of 'p' (nested prototypes) array. */
-  int sizelocvars;
+  int sizelocvars; /**< Size of 'locvars' array. */
   int sizeabslineinfo;  /**< Size of 'abslineinfo' array. */
   int linedefined;  /**< Debug information: start line. */
   int lastlinedefined;  /**< Debug information: end line. */
-  TValue *k;  /**< Constants used by the function. */
-  Instruction *code;  /**< Opcodes (bytecode). */
-  struct Proto **p;  /**< Functions defined inside this function. */
   Upvaldesc *upvalues;  /**< Upvalue information. */
   ls_byte *lineinfo;  /**< Map from opcodes to source lines. */
   AbsLineInfo *abslineinfo;  /**< Map from opcodes to absolute source lines. */
   LocVar *locvars;  /**< Information about local variables. */
   TString  *source;  /**< Source file name. */
-  GCObject *gclist;
-  int is_sleeping;
-  CallQueue *call_queue;
+  GCObject *gclist; /**< Garbage collector list. */
+  int is_sleeping; /**< Sleep status. */
+  CallQueue *call_queue; /**< Call queue for sleep/wake. */
   struct VMCodeTable *vm_code_table;  /**< VM protection code table pointer. */
 } Proto;
 
@@ -721,21 +809,21 @@ typedef struct Proto {
     checkliveness(L,io); }
 
 
-/*
-** Upvalues for Lua closures
-*/
+/**
+ * @brief Upvalues for Lua closures.
+ */
 typedef struct UpVal {
   CommonHeader;
   union {
-    TValue *p;  /* points to stack or to its own value */
-    ptrdiff_t offset;  /* used while the stack is being reallocated */
+    TValue *p;  /**< Points to stack or to its own value. */
+    ptrdiff_t offset;  /**< Used while the stack is being reallocated. */
   } v;
   union {
     struct {  /* (when open) */
-      struct UpVal *next;  /* linked list */
+      struct UpVal *next;  /**< Linked list. */
       struct UpVal **previous;
     } open;
-    TValue value;  /* the value (when closed) */
+    TValue value;  /**< The value (when closed). */
   } u;
 } UpVal;
 
@@ -744,20 +832,29 @@ typedef struct UpVal {
 #define ClosureHeader \
 	CommonHeader; lu_byte nupvalues; lu_byte ishotfixed; GCObject *gclist
 
+/**
+ * @brief C closure structure.
+ */
 typedef struct CClosure {
   ClosureHeader;
-  lua_CFunction f;
-  TValue upvalue[1];  /* list of upvalues */
+  lua_CFunction f; /**< C function. */
+  TValue upvalue[1];  /**< List of upvalues. */
 } CClosure;
 
 
+/**
+ * @brief Lua closure structure.
+ */
 typedef struct LClosure {
   ClosureHeader;
-  struct Proto *p;
-  UpVal *upvals[1];  /* list of upvalues */
+  struct Proto *p; /**< Function prototype. */
+  UpVal *upvals[1];  /**< List of upvalues. */
 } LClosure;
 
 
+/**
+ * @brief Union of closures.
+ */
 typedef union Closure {
   CClosure c;
   LClosure l;
@@ -767,6 +864,93 @@ typedef union Closure {
 #define getproto(o)	(clLvalue(o)->p)
 
 /* }======================================================= */
+
+
+/*
+** {=======================================================
+** Concepts
+** ========================================================
+*/
+
+#define LUA_VCONCEPT	makevariant(LUA_TCONCEPT, 0)
+
+#define ttisconcept(o)		checktag((o), ctb(LUA_VCONCEPT))
+
+#define clConceptValue(o)	check_exp(ttisconcept(o), gco2concept(val_(o).gc))
+
+#define setclConceptValue(L,obj,x) \
+  { TValue *io = (obj); Concept *x_ = (x); \
+    val_(io).gc = obj2gco(x_); settt_(io, ctb(LUA_VCONCEPT)); \
+    checkliveness(L,io); }
+
+/**
+ * @brief Concept structure.
+ */
+typedef struct Concept {
+  ClosureHeader;
+  struct Proto *p; /**< Function prototype. */
+  UpVal *upvals[1];  /**< List of upvalues. */
+} Concept;
+
+
+/*
+** {=======================================================
+** Namespaces
+** ========================================================
+*/
+
+#define LUA_VNAMESPACE	makevariant(LUA_TNAMESPACE, 0)
+
+#define ttisnamespace(o)		checktag((o), ctb(LUA_VNAMESPACE))
+
+#define nsvalue(o)	check_exp(ttisnamespace(o), gco2ns(val_(o).gc))
+
+#define setnsvalue(L,obj,x) \
+  { TValue *io = (obj); Namespace *x_ = (x); \
+    val_(io).gc = obj2gco(x_); settt_(io, ctb(LUA_VNAMESPACE)); \
+    checkliveness(L,io); }
+
+/**
+ * @brief Namespace structure.
+ */
+typedef struct Namespace {
+  CommonHeader;
+  struct Table *data; /**< Namespace data. */
+  TString *name; /**< Namespace name. */
+  struct GCObject *gclist; /**< GC list. */
+  struct Namespace *using_next; /**< Linked list of used namespaces. */
+} Namespace;
+
+
+/*
+** {=======================================================
+** Super Structs
+** ========================================================
+*/
+
+#define LUA_VSUPERSTRUCT	makevariant(LUA_TSUPERSTRUCT, 0)
+
+#define ttissuperstruct(o)		checktag((o), ctb(LUA_VSUPERSTRUCT))
+
+#define superstructvalue(o)	check_exp(ttissuperstruct(o), gco2superstruct(val_(o).gc))
+
+#define setsuperstructvalue(L,obj,x) \
+  { TValue *io = (obj); SuperStruct *x_ = (x); \
+    val_(io).gc = obj2gco(x_); settt_(io, ctb(LUA_VSUPERSTRUCT)); \
+    checkliveness(L,io); }
+
+/**
+ * @brief SuperStruct structure.
+ */
+typedef struct SuperStruct {
+  CommonHeader;
+  TString *name; /**< SuperStruct name. */
+  unsigned int nsize; /**< Size. */
+  unsigned int ncapacity; /**< Capacity. */
+  TValue *data; /**< Data. */
+} SuperStruct;
+
+#define gco2superstruct(o)	check_exp((o)->tt == LUA_VSUPERSTRUCT, &((cast_u(o) - offsetof(SuperStruct, next))->superstruct))
 
 
 /*
@@ -845,9 +1029,11 @@ typedef struct Table {
   TValue *array;  /**< Array part. */
   Node *node;      /**< Hash part. */
   Node *lastfree;  /**< Any free position is before this position. */
-  struct Table *metatable; /**< Metatable pointer. */
-  GCObject *gclist;
+  struct GCObject *metatable; /**< Metatable pointer. */
+  GCObject *gclist; /**< Garbage collector list. */
   lu_byte type;    /**< Custom type flag. */
+  l_rwlock_t lock; /**< Lock for thread safety. */
+  struct Namespace *using_next; /**< Used namespaces. */
 } Table;
 
 
@@ -928,4 +1114,3 @@ LUAI_FUNC lu_byte luaO_codeparam (unsigned int p);
 
 
 #endif
-

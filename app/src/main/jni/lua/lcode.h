@@ -41,10 +41,14 @@ typedef enum BinOpr {
   OPR_SPACESHIP,
   /* type check operator */
   OPR_IS,
+  /* in operator */
+  OPR_IN,
   /* logical operators */
   OPR_AND, OPR_OR,
   /* null coalescing operator */
   OPR_NULLCOAL,
+  /* pick case operator */
+  OPR_CASE,
   OPR_NOBINOPR
 } BinOpr;
 
@@ -56,7 +60,7 @@ typedef enum BinOpr {
 #define luaK_codeABC(fs,o,a,b,c)	luaK_codeABCk(fs,o,a,b,c,0)
 
 
-typedef enum UnOpr { OPR_MINUS, OPR_BNOT, OPR_NOT, OPR_LEN, OPR_NOUNOPR } UnOpr;
+typedef enum UnOpr { OPR_MINUS, OPR_BNOT, OPR_NOT, OPR_LEN, OPR_AWAIT, OPR_NOUNOPR } UnOpr;
 
 
 /* get (pointer to) instruction of given 'expdesc' */

@@ -20,6 +20,9 @@
 #include "lualib.h"
 #include "llimits.h"
 
+#include "lstate.h"
+#include "lobject.h"
+
 
 /*
 ** Operations that an object must define to mimic a table
@@ -165,7 +168,7 @@ static int clone_aux (lua_State *L,int idx) {
     return 1;
 }
 
-static int clone (lua_State *L) {
+static int t_clone (lua_State *L) {
     luaL_checktype(L, 1, LUA_TTABLE);
     lua_newtable(L);
     lua_insert(L,1);
@@ -652,6 +655,98 @@ static int tfill (lua_State *L) {
   return 0;
 }
 
+static int t_concat_op (lua_State *L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_checktype(L, 2, LUA_TTABLE);
+  lua_newtable(L);
+  int idx = 1;
+  int n1 = luaL_len(L, 1);
+  for(int i=1; i<=n1; i++) {
+    lua_geti(L, 1, i);
+    lua_seti(L, -2, idx++);
+  }
+  int n2 = luaL_len(L, 2);
+  for(int i=1; i<=n2; i++) {
+    lua_geti(L, 2, i);
+    lua_seti(L, -2, idx++);
+  }
+  return 1;
+}
+
+static int t_add_op (lua_State *L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_checktype(L, 2, LUA_TTABLE);
+  lua_newtable(L); /* Result at 3 */
+  int idx = 1;
+  lua_newtable(L); /* seen at 4 */
+  int n1 = luaL_len(L, 1);
+  for(int i=1; i<=n1; i++) {
+    lua_geti(L, 1, i);
+    lua_pushvalue(L, -1);
+    lua_gettable(L, 4); /* Check seen */
+    if(lua_isnil(L, -1)) {
+      lua_pop(L, 1);
+      lua_pushvalue(L, -1);
+      lua_seti(L, 3, idx++); /* Add to Result */
+      lua_pushvalue(L, -1);
+      lua_pushboolean(L, 1);
+      lua_settable(L, 4); /* Add to seen */
+    } else {
+      lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+  }
+  int n2 = luaL_len(L, 2);
+  for(int i=1; i<=n2; i++) {
+    lua_geti(L, 2, i);
+    lua_pushvalue(L, -1);
+    lua_gettable(L, 4);
+    if(lua_isnil(L, -1)) {
+      lua_pop(L, 1);
+      lua_pushvalue(L, -1);
+      lua_seti(L, 3, idx++);
+      lua_pushvalue(L, -1);
+      lua_pushboolean(L, 1);
+      lua_settable(L, 4);
+    } else {
+      lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+  return 1;
+}
+
+static int t_sub_op (lua_State *L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_checktype(L, 2, LUA_TTABLE);
+  lua_newtable(L); /* Result at 3 */
+  int idx = 1;
+  lua_newtable(L); /* exclude at 4 */
+  int n2 = luaL_len(L, 2);
+  for(int i=1; i<=n2; i++) {
+    lua_geti(L, 2, i);
+    lua_pushboolean(L, 1);
+    lua_settable(L, 4);
+  }
+  int n1 = luaL_len(L, 1);
+  for(int i=1; i<=n1; i++) {
+    lua_geti(L, 1, i);
+    lua_pushvalue(L, -1);
+    lua_gettable(L, 4);
+    if(lua_isnil(L, -1)) {
+      lua_pop(L, 1);
+      lua_pushvalue(L, -1);
+      lua_seti(L, 3, idx++);
+    } else {
+      lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+  return 1;
+}
+
 static const luaL_Reg tab_funcs[] = {
 	{"concat", tconcat},
 #if defined(LUA_COMPAT_FOREACH)
@@ -664,7 +759,7 @@ static const luaL_Reg tab_funcs[] = {
 	{"clear", clear},
 	{"find", find},
 	{"gfind", gfind},
-	{"clone", clone},
+	{"clone", t_clone},
 	{"const", tconst},
 #endif
 	{"add", tadd},
@@ -684,6 +779,28 @@ static const luaL_Reg tab_funcs[] = {
 
 LUAMOD_API int luaopen_table (lua_State *L) {
     luaL_newlib(L, tab_funcs);
+
+    /* create default metatable for tables */
+    lua_newtable(L);
+    lua_pushvalue(L, -2);
+    lua_setfield(L, -2, "__index");  /* mt.__index = table */
+    lua_pushcfunction(L, t_concat_op);
+    lua_setfield(L, -2, "__concat");
+    lua_pushcfunction(L, t_add_op);
+    lua_setfield(L, -2, "__add");
+    lua_pushcfunction(L, t_sub_op);
+    lua_setfield(L, -2, "__sub");
+
+    /* set it as the default metatable for tables */
+    G(L)->mt[LUA_TTABLE] = gcvalue(s2v(L->top.p - 1));
+
+    lua_pop(L, 1); /* pop metatable */
+
+    /* set an empty metatable for the table library itself to prevent infinite loops
+       in __index lookups (since it is the __index target) */
+    lua_newtable(L);
+    lua_setmetatable(L, -2);
+
 #if defined(LUA_COMPAT_UNPACK)
     /* _G.unpack = table.unpack */
   lua_getfield(L, -1, "unpack");

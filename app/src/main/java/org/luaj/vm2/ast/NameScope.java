@@ -34,9 +34,10 @@ public class NameScope {
 	static { 
 		String[] k = new String[] { 
 	        "and", "break", "do", "else", "elseif", "end", 
-	        "false", "for", "function", "if", "in", "local",
+	        "false", "for", "function", "if", "in", "as", "local",
 	        "nil", "not", "or", "repeat", "return", 
-	        "then", "true", "until", "while" };
+	        "then", "true", "until", "while", "export",
+	        "async", "await", "struct", "concept", "namespace" };
 		for ( int i=0; i<k.length; i++ )
 			LUA_KEYWORDS.add( k[i] );
 	}

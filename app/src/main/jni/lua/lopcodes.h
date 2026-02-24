@@ -366,6 +366,8 @@ OP_IMPLEMENT,/*	A B	R[A] implements R[B]，类实现接口			*/
 OP_SETIFACEFLAG,/*A	设置R[A]为接口（设置CLASS_FLAG_INTERFACE）	*/
 OP_ADDMETHOD,/*	A B C	R[A].__methods[K[B]] := K[C]，添加接口方法签名	*/
 
+OP_IN,/*	A B C	R[A] := R[B] in R[C]				*/
+
 /*----------------------------------------------------------------------
   切片操作码 - 支持 Python 风格的切片语法 t[start:end:step]
 ------------------------------------------------------------------------*/
@@ -381,6 +383,24 @@ OP_NOP,/*	A B C	空操作指令 - 不执行任何操作
 			A = 虚假寄存器索引（被忽略）
 			B = 虚假操作数1（被忽略）
 			C = 虚假操作数2（被忽略）			*/
+
+OP_CASE,/*	A B C	R[A] := { R[B], R[C] } (create case pair)	*/
+
+OP_NEWCONCEPT,/*	A Bx	R[A] := concept(KPROTO[Bx])			*/
+
+OP_NEWNAMESPACE,/*	A Bx	R[A] := newnamespace(K[Bx])			*/
+
+OP_LINKNAMESPACE,/*	A B	R[A]->using_next = R[B]				*/
+
+OP_NEWSUPER,/*	A Bx	R[A] := newsuperstruct(K[Bx])			*/
+
+OP_SETSUPER,/*	A B C	R[A][B] := R[C]					*/
+
+OP_GETCMDS,/*	A	R[A] := LXC_CMDS				*/
+OP_GETOPS,/*	A	R[A] := LXC_OPERATORS				*/
+OP_ASYNCWRAP,/*	A B	R[A] := async_wrap(R[B])			*/
+OP_GENERICWRAP,/* A B	R[A] := generic_wrap(R[B], R[B+1], R[B+2])	*/
+OP_CHECKTYPE,/*	A B C	if (check_type(R[A], R[B]) != true) error(K[C])	*/
 
 OP_EXTRAARG/*	Ax	extra (larger) argument for previous opcode	*/
 } OpCode;

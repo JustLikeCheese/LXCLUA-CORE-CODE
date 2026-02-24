@@ -41,6 +41,7 @@ public enum LuaTokenTypes {
     GOTO,           // goto
     IF,             // if
     IN,             // in
+    AS,             // as (类型转换)
     IS,             // is (类型检查)
     LAMBDA,         // lambda
     LOCAL,          // local
@@ -61,6 +62,7 @@ public enum LuaTokenTypes {
     KEYWORD,        // keyword (动态关键字)
     OPERATOR_KW,    // operator (运算符重载)
     DOLLAR,         // $
+    EXPORT,         // export
 
     // OOP 面向对象关键字
     ABSTRACT,       // abstract (抽象方法/类)
@@ -164,6 +166,20 @@ public enum LuaTokenTypes {
 
     // 保留 (兼容旧代码)
     DEFER,          // defer (延迟执行)
+
+    // 异步关键字
+    ASYNC,          // async (异步函数声明)
+    AWAIT,          // await (等待异步结果)
+
+    // 结构体关键字
+    STRUCT,         // struct (结构体定义)
+    SUPERSTRUCT,    // superstruct (超级结构体)
+
+    // 概念/约束关键字
+    CONCEPT,        // concept (模板约束)
+
+    // 命名空间关键字
+    NAMESPACE,      // namespace (命名空间)
 
     // 颜色高亮 (兼容旧代码)
     HEX_COLOR,

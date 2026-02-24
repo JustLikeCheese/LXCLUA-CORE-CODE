@@ -1,8 +1,10 @@
-/*
-** $Id: lmem.c $
-** Interface to Memory Manager
-** See Copyright Notice in lua.h
-*/
+/**
+ * @file lmem.c
+ * @brief Interface to Memory Manager.
+ *
+ * This file contains the implementation of the memory manager, including
+ * generic allocation functions and the small object memory pool.
+ */
 
 #define lmem_c
 #define LUA_CORE
@@ -94,6 +96,18 @@ static void *firsttry (global_State *g, void *block, size_t os, size_t ns) {
 #define MINSIZEARRAY	4
 
 
+/**
+ * @brief Grows an array.
+ *
+ * @param L The Lua state.
+ * @param block The current block.
+ * @param nelems Number of elements needed.
+ * @param psize Pointer to the current size (in elements).
+ * @param size_elems Size of each element.
+ * @param limit Maximum number of elements.
+ * @param what Description of the array (for error messages).
+ * @return The new block address.
+ */
 void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize,
                      int size_elems, int limit, const char *what) {
   void *newblock;
@@ -119,12 +133,16 @@ void *luaM_growaux_ (lua_State *L, void *block, int nelems, int *psize,
 }
 
 
-/*
-** In prototypes, the size of the array is also its number of
-** elements (to save memory). So, if it cannot shrink an array
-** to its number of elements, the only option is to raise an
-** error.
-*/
+/**
+ * @brief Shrinks an array.
+ *
+ * @param L The Lua state.
+ * @param block The current block.
+ * @param size Pointer to the current size (in elements).
+ * @param final_n Final number of elements.
+ * @param size_elem Size of each element.
+ * @return The new block address.
+ */
 void *luaM_shrinkvector_ (lua_State *L, void *block, int *size,
                           int final_n, int size_elem) {
   void *newblock;
@@ -139,19 +157,29 @@ void *luaM_shrinkvector_ (lua_State *L, void *block, int *size,
 /* }======================================================= */
 
 
+/**
+ * @brief Raises a memory allocation error.
+ *
+ * @param L The Lua state.
+ * @return Never returns.
+ */
 l_noret luaM_toobig (lua_State *L) {
   luaG_runerror(L, "memory allocation error: block too big");
 }
 
 
-/*
-** Free memory
-*/
+/**
+ * @brief Frees a memory block.
+ *
+ * @param L The Lua state.
+ * @param block The block to free.
+ * @param osize The size of the block.
+ */
 void luaM_free_ (lua_State *L, void *block, size_t osize) {
   global_State *g = G(L);
   lua_assert((osize == 0) == (block == NULL));
   callfrealloc(g, block, osize, 0);
-  g->GCdebt -= osize;
+  l_atomic_sub(&g->GCdebt, osize);
 }
 
 
@@ -170,9 +198,15 @@ static void *tryagain (lua_State *L, void *block,
 }
 
 
-/*
-** Generic allocation routine.
-*/
+/**
+ * @brief Reallocates a memory block.
+ *
+ * @param L The Lua state.
+ * @param block The current block.
+ * @param osize The old size.
+ * @param nsize The new size.
+ * @return The new block address, or NULL on failure.
+ */
 void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize) {
   void *newblock;
   global_State *g = G(L);
@@ -184,11 +218,20 @@ void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize) {
       return NULL;  /* do not update 'GCdebt' */
   }
   lua_assert((nsize == 0) == (newblock == NULL));
-  g->GCdebt = (g->GCdebt + nsize) - osize;
+  l_atomic_add(&g->GCdebt, (l_mem)(nsize - osize));
   return newblock;
 }
 
 
+/**
+ * @brief Reallocates a memory block, raising an error on failure.
+ *
+ * @param L The Lua state.
+ * @param block The current block.
+ * @param osize The old size.
+ * @param nsize The new size.
+ * @return The new block address.
+ */
 void *luaM_saferealloc_ (lua_State *L, void *block, size_t osize,
                                                     size_t nsize) {
   void *newblock = luaM_realloc_(L, block, osize, nsize);
@@ -198,6 +241,14 @@ void *luaM_saferealloc_ (lua_State *L, void *block, size_t osize,
 }
 
 
+/**
+ * @brief Allocates a new memory block.
+ *
+ * @param L The Lua state.
+ * @param size The size to allocate.
+ * @param tag The tag for the block (unused in standard Lua, but passed to allocator).
+ * @return The new block address.
+ */
 void *luaM_malloc_ (lua_State *L, size_t size, int tag) {
   if (size == 0)
     return NULL;  /* that's all */
@@ -209,7 +260,7 @@ void *luaM_malloc_ (lua_State *L, size_t size, int tag) {
       if (newblock == NULL)
         luaM_error(L);
     }
-    g->GCdebt += size;
+    l_atomic_add(&g->GCdebt, size);
     return newblock;
   }
 }
@@ -239,6 +290,11 @@ static int get_size_class (size_t size) {
   return -1;
 }
 
+/**
+ * @brief Initializes the memory pool.
+ *
+ * @param L The Lua state.
+ */
 void luaM_poolinit (lua_State *L) {
   global_State *g = G(L);
   int i;
@@ -255,11 +311,18 @@ void luaM_poolinit (lua_State *L) {
   g->mempool.fallback_ud = g->ud;
   g->mempool.enabled = 1;
   g->mempool.small_limit = size_classes[NUM_SIZE_CLASSES - 1];
+  l_mutex_init(&g->mempool.lock);
 }
 
+/**
+ * @brief Shuts down the memory pool, freeing all cached blocks.
+ *
+ * @param L The Lua state.
+ */
 void luaM_poolshutdown (lua_State *L) {
   global_State *g = G(L);
   int i;
+  l_mutex_lock(&g->mempool.lock);
   for (i = 0; i < NUM_SIZE_CLASSES; i++) {
     MemPool *pool = &g->mempool.pools[i];
     void *block = pool->free_list;
@@ -272,8 +335,17 @@ void luaM_poolshutdown (lua_State *L) {
     pool->current_count = 0;
   }
   g->mempool.enabled = 0;
+  l_mutex_unlock(&g->mempool.lock);
+  l_mutex_destroy(&g->mempool.lock);
 }
 
+/**
+ * @brief Allocates a block from the memory pool.
+ *
+ * @param L The Lua state.
+ * @param size The size to allocate.
+ * @return The allocated block, or NULL if allocation failed.
+ */
 void *luaM_poolalloc (lua_State *L, size_t size) {
   global_State *g = G(L);
   if (!g->mempool.enabled || size == 0)
@@ -283,6 +355,7 @@ void *luaM_poolalloc (lua_State *L, size_t size) {
   if (idx < 0)
     return NULL;
 
+  l_mutex_lock(&g->mempool.lock);
   MemPool *pool = &g->mempool.pools[idx];
   pool->total_alloc++;
 
@@ -291,17 +364,26 @@ void *luaM_poolalloc (lua_State *L, size_t size) {
     pool->free_list = *(void **)block;
     pool->current_count--;
     pool->total_hit++;
+    l_mutex_unlock(&g->mempool.lock);
     return block;
   }
+  l_mutex_unlock(&g->mempool.lock);
 
   void *block = callfrealloc(g, NULL, 0, pool->object_size);
   if (block == NULL)
     return NULL;
 
-  g->GCdebt += pool->object_size;
+  l_atomic_add(&g->GCdebt, pool->object_size);
   return block;
 }
 
+/**
+ * @brief Frees a block to the memory pool.
+ *
+ * @param L The Lua state.
+ * @param block The block to free.
+ * @param size The size of the block.
+ */
 void luaM_poolfree (lua_State *L, void *block, size_t size) {
   global_State *g = G(L);
   if (!g->mempool.enabled || block == NULL || size == 0)
@@ -313,9 +395,11 @@ void luaM_poolfree (lua_State *L, void *block, size_t size) {
     return;
   }
 
+  l_mutex_lock(&g->mempool.lock);
   MemPool *pool = &g->mempool.pools[idx];
 
   if (pool->current_count >= pool->max_cache) {
+    l_mutex_unlock(&g->mempool.lock);
     luaM_free_(L, block, pool->object_size);
     return;
   }
@@ -323,11 +407,18 @@ void luaM_poolfree (lua_State *L, void *block, size_t size) {
   *(void **)block = pool->free_list;
   pool->free_list = block;
   pool->current_count++;
+  l_mutex_unlock(&g->mempool.lock);
 }
 
+/**
+ * @brief Shrinks the memory pool by freeing excess cached blocks.
+ *
+ * @param L The Lua state.
+ */
 void luaM_poolshrink (lua_State *L) {
   global_State *g = G(L);
   int i;
+  l_mutex_lock(&g->mempool.lock);
   for (i = 0; i < NUM_SIZE_CLASSES; i++) {
     MemPool *pool = &g->mempool.pools[i];
     int target = pool->max_cache >> 1;
@@ -335,22 +426,47 @@ void luaM_poolshrink (lua_State *L) {
       void *block = pool->free_list;
       pool->free_list = *(void **)block;
       pool->current_count--;
-      luaM_free_(L, block, pool->object_size);
+
+      // We must unlock to free, because luaM_free_ might want to update GCdebt or do other things.
+      // But wait, luaM_free_ calls callfrealloc, which is just realloc/free.
+      // It does atomic_sub GCdebt.
+      // However, if we simply free it here while holding the lock, it is safe as long as free doesn't re-enter pool.
+      // Standard free does not.
+      // But we are in poolshrink, which is called during GC?
+      // luaM_poolgc calls this.
+      // Let's check if it's safe to hold lock. Yes, it should be.
+
+      callfrealloc(g, block, pool->object_size, 0);
+      l_atomic_sub(&g->GCdebt, pool->object_size);
     }
   }
+  l_mutex_unlock(&g->mempool.lock);
 }
 
+/**
+ * @brief Performs garbage collection on the memory pool (shrinks it).
+ *
+ * @param L The Lua state.
+ */
 void luaM_poolgc (lua_State *L) {
   luaM_poolshrink(L);
 }
 
+/**
+ * @brief Returns the total memory usage of the memory pool.
+ *
+ * @param L The Lua state.
+ * @return Total memory used by cached blocks.
+ */
 size_t luaM_poolgetusage (lua_State *L) {
   global_State *g = G(L);
   size_t total = 0;
   int i;
+  l_mutex_lock(&g->mempool.lock);
   for (i = 0; i < NUM_SIZE_CLASSES; i++) {
     MemPool *pool = &g->mempool.pools[i];
     total += pool->current_count * pool->object_size;
   }
+  l_mutex_unlock(&g->mempool.lock);
   return total;
 }

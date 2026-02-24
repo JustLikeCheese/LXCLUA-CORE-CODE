@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.zip.Adler32;
+import java.util.zip.CRC32;
 import java.util.zip.CheckedOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -587,6 +588,19 @@ public class LuaUtil {
                 String entryName = mainFileName + file.getName();
                 System.out.println(entryName);
                 ZipEntry entry = new ZipEntry(entryName);
+
+                // Android R+ 要求 resources.arsc 不压缩且 4 字节对齐
+                if ("resources.arsc".equals(entryName)) {
+                    entry.setMethod(ZipEntry.STORED);
+                    entry.setSize(file.length());
+                    entry.setCrc(0);
+                    try {
+                        entry.setCrc(computeCrc(file));
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+
                 out.putNextEntry(entry);
                 //			byte[] data = new byte[BUFFER];
                 int count;
@@ -618,6 +632,18 @@ public class LuaUtil {
                 }
             }
         }
+    }
+
+    private static long computeCrc(File file) throws IOException {
+        CRC32 crc = new CRC32();
+        byte[] buffer = new byte[BUFFER.length];
+        try (FileInputStream fis = new FileInputStream(file)) {
+            int len;
+            while ((len = fis.read(buffer)) != -1) {
+                crc.update(buffer, 0, len);
+            }
+        }
+        return crc.getValue();
     }
 
     public static final HashMap<String, String> mFileTypes = new HashMap<String, String>();

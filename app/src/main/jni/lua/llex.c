@@ -13,6 +13,7 @@
 #include <locale.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "lua.h"
 
@@ -27,10 +28,12 @@
 #include "lstring.h"
 #include "ltable.h"
 #include "lzio.h"
+#include "aes.h"
+#include "sha256.h"
 
 
 
-#define next(ls)	(ls->current = zgetc(ls->z))
+#define next(ls)	(ls->curpos++, ls->current = zgetc(ls->z))
 
 
 /* minimum size for string buffer */
@@ -41,31 +44,171 @@
 
 #define currIsNewline(ls)	(ls->current == '\n' || ls->current == '\r')
 
+/* Duplicate helper functions for llex.c */
+static const char* nirithy_b64 = "9876543210zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJIHGFEDCBA-_";
 
-typedef struct LoadF {
-  int n;  /* number of pre-read characters */
-  FILE *f;  /* file being read */
-  char buff[1024];  /* area for reading file */
-} LoadF;
-
-static const char *getF (lua_State *L, void *ud, size_t *size) {
-  LoadF *lf = (LoadF *)ud;
-  (void)L;
-  if (lf->n > 0) {  /* are there pre-read characters to be read? */
-    *size = lf->n;  /* return them (chars already in buffer) */
-    lf->n = 0;  /* no more pre-read characters */
-  }
-  else {
-    if (feof(lf->f)) return NULL;
-    *size = fread(lf->buff, 1, sizeof(lf->buff), lf->f);
-  }
-  return lf->buff;
+static int nirithy_b64_val(char c) {
+  const char *p = strchr(nirithy_b64, c);
+  if (p) return (int)(p - nirithy_b64);
+  return -1;
 }
 
-static void luaX_pushincludefile(LexState *ls, const char *filename) {
+static unsigned char* nirithy_decode(const char* input, size_t input_len, size_t* out_len) {
+  size_t len;
+  unsigned char* out;
+  size_t i, j;
+
+  if (input_len % 4 != 0) return NULL;
+  len = input_len / 4 * 3;
+  if (input_len > 0 && input[input_len - 1] == '=') len--;
+  if (input_len > 1 && input[input_len - 2] == '=') len--;
+  out = (unsigned char*)malloc(len);
+  if (!out) return NULL;
+
+  for (i = 0, j = 0; i < input_len; i += 4) {
+    int a = input[i] == '=' ? 0 : nirithy_b64_val(input[i]);
+    int b = input[i+1] == '=' ? 0 : nirithy_b64_val(input[i+1]);
+    int c = input[i+2] == '=' ? 0 : nirithy_b64_val(input[i+2]);
+    int d = input[i+3] == '=' ? 0 : nirithy_b64_val(input[i+3]);
+    uint32_t triple;
+
+    if (a < 0 || b < 0 || c < 0 || d < 0) {
+      free(out);
+      return NULL;
+    }
+    triple = (uint32_t)((a << 18) + (b << 12) + (c << 6) + d);
+    if (j < len) out[j++] = (triple >> 16) & 0xFF;
+    if (j < len) out[j++] = (triple >> 8) & 0xFF;
+    if (j < len) out[j++] = (triple) & 0xFF;
+  }
+  *out_len = len;
+  return out;
+}
+
+static void nirithy_derive_key(uint64_t timestamp, uint8_t *key) {
+  uint8_t input[32];
+  uint8_t digest[SHA256_DIGEST_SIZE];
+
+  memcpy(input, &timestamp, 8);
+  memcpy(input + 8, "NirithySalt", 11);
+
+  SHA256(input, 19, digest);
+  memcpy(key, digest, 16);
+}
+
+static void nirithy_decrypt(unsigned char* data, size_t len, uint64_t timestamp, const uint8_t* iv) {
+  uint8_t key[16];
+  struct AES_ctx ctx;
+
+  nirithy_derive_key(timestamp, key);
+  AES_init_ctx_iv(&ctx, key, iv);
+  AES_CTR_xcrypt_buffer(&ctx, data, (uint32_t)len);
+}
+
+typedef struct LoadState {
+  int is_string;
+  union {
+    struct {
+      int n;
+      FILE *f;
+      char buff[1024];
+    } f;
+    struct {
+      const char *s;
+      size_t size;
+      char *to_free; /* buffer to free */
+    } s;
+  } u;
+} LoadState;
+
+static const char *getReader (lua_State *L, void *ud, size_t *size) {
+  LoadState *ls = (LoadState *)ud;
+  (void)L;
+  if (ls->is_string) {
+    if (ls->u.s.size == 0) return NULL;
+    *size = ls->u.s.size;
+    ls->u.s.size = 0;
+    return ls->u.s.s;
+  } else {
+    if (ls->u.f.n > 0) {
+      *size = ls->u.f.n;
+      ls->u.f.n = 0;
+    } else {
+      if (feof(ls->u.f.f)) return NULL;
+      *size = fread(ls->u.f.buff, 1, sizeof(ls->u.f.buff), ls->u.f.f);
+    }
+    return ls->u.f.buff;
+  }
+}
+
+void luaX_pushincludefile(LexState *ls, const char *filename) {
   FILE *f = fopen(filename, "r");
   if (f == NULL) {
     luaX_syntaxerror(ls, luaO_pushfstring(ls->L, "cannot open file '%s'", filename));
+  }
+
+  /* Check signature */
+  char sig[9];
+  int is_encrypted = 0;
+  if (fread(sig, 1, 9, f) == 9 && memcmp(sig, "Nirithy==", 9) == 0) {
+    is_encrypted = 1;
+  }
+
+  LoadState *lf = luaM_new(ls->L, LoadState);
+
+  if (is_encrypted) {
+    /* Read whole file */
+    long fsize;
+    size_t payload_len;
+    char *payload;
+    size_t bin_len;
+    unsigned char *bin;
+    uint64_t timestamp;
+    uint8_t iv[16];
+    unsigned char *data;
+    size_t data_len;
+
+    fseek(f, 0, SEEK_END);
+    fsize = ftell(f);
+    fseek(f, 9, SEEK_SET); /* Skip signature */
+
+    payload_len = fsize - 9;
+    payload = (char*)malloc(payload_len + 1);
+    if (!payload || fread(payload, 1, payload_len, f) != payload_len) {
+        if (payload) free(payload);
+        fclose(f);
+        luaM_free(ls->L, lf);
+        luaX_syntaxerror(ls, "failed to read encrypted file");
+    }
+    fclose(f); /* File no longer needed */
+
+    bin = nirithy_decode(payload, payload_len, &bin_len);
+    free(payload);
+
+    if (!bin || bin_len <= 24) {
+        if (bin) free(bin);
+        luaM_free(ls->L, lf);
+        luaX_syntaxerror(ls, "failed to decode encrypted file");
+    }
+
+    memcpy(&timestamp, bin, 8);
+    memcpy(iv, bin + 8, 16);
+
+    data = bin + 24;
+    data_len = bin_len - 24;
+
+    nirithy_decrypt(data, data_len, timestamp, iv);
+
+    lf->is_string = 1;
+    lf->u.s.s = (const char*)data;
+    lf->u.s.size = data_len;
+    lf->u.s.to_free = (char*)bin;
+
+  } else {
+    rewind(f);
+    lf->is_string = 0;
+    lf->u.f.f = f;
+    lf->u.f.n = 0;
   }
 
   IncludeState *inc = luaM_new(ls->L, IncludeState);
@@ -77,12 +220,8 @@ static void luaX_pushincludefile(LexState *ls, const char *filename) {
   inc->prev = ls->inc_stack;
   ls->inc_stack = inc;
 
-  LoadF *lf = luaM_new(ls->L, LoadF);
-  lf->n = 0;
-  lf->f = f;
-
   ZIO *z = luaM_new(ls->L, ZIO);
-  luaZ_init(ls->L, z, getF, lf);
+  luaZ_init(ls->L, z, getReader, lf);
 
   ls->z = z;
   ls->linenumber = 1;
@@ -96,8 +235,14 @@ static void luaX_popincludefile(LexState *ls) {
   IncludeState *inc = ls->inc_stack;
   if (inc) {
     /* Free current ZIO resources */
-    LoadF *lf = (LoadF *)ls->z->data;
-    fclose(lf->f);
+    LoadState *lf = (LoadState *)ls->z->data;
+
+    if (lf->is_string) {
+      if (lf->u.s.to_free) free(lf->u.s.to_free);
+    } else {
+      fclose(lf->u.f.f);
+    }
+
     luaM_free(ls->L, lf);
     luaM_free(ls->L, ls->z);
 
@@ -112,7 +257,7 @@ static void luaX_popincludefile(LexState *ls) {
   }
 }
 
-static void luaX_addalias(LexState *ls, TString *name, Token *tokens, int ntokens) {
+void luaX_addalias(LexState *ls, TString *name, Token *tokens, int ntokens) {
   Alias *a = luaM_new(ls->L, Alias);
   a->name = name;
   a->tokens = tokens;
@@ -123,11 +268,31 @@ static void luaX_addalias(LexState *ls, TString *name, Token *tokens, int ntoken
 
 
 /* ORDER RESERVED */
+static const char* const luaX_warnNames[] = {
+  "all",
+  "var-shadow",
+  "global-shadow",
+  "type-mismatch",
+  "unreachable-code",
+  "excessive-arguments",
+  "bad-practice",
+  "possible-typo",
+  "non-portable-code",
+  "non-portable-bytecode",
+  "non-portable-name",
+  "implicit-global",
+  "unannotated-fallthrough",
+  "discarded-return",
+  "field-shadow",
+  "unused",
+  NULL
+};
+
 static const char *const luaX_tokens [] = {
-    "and", "asm", "break", "case", "catch", "command", "const", "continue", "default", "do", "else", "elseif",
-    "end", "enum", "false", "finally", "for", "function", "global", "goto", "if", "in", "is", "keyword", "lambda", "local", "nil", "not", "operator", "or",
-    "repeat",
-    "return", "switch", "take", "then", "true", "try", "until", "when", "while", "with",
+    "and", "asm", "async", "await", "bool", "break", "case", "catch", "char", "command", "concept", "const", "continue", "default", "defer", "do", "double", "else", "elseif",
+    "end", "enum", "export", "false", "finally", "float", "for", "function", "global", "goto", "if", "in", "int", "is", "keyword", "lambda", "local", "long", "namespace", "nil", "not", "operator", "or",
+    "repeat", "requires",
+    "return", "struct", "superstruct", "switch", "take", "then", "true", "try", "until", "using", "void", "when", "while", "with",
     "//", "..", "...", "==", ">=", "<=", "~",  "<<", ">>", "|>", "<|", "|?>",
     "::", "<eof>",
     "<let>", "=>", ":=", "->",
@@ -143,6 +308,71 @@ static const char *const luaX_tokens [] = {
 
 static l_noret lexerror (LexState *ls, const char *msg, int token);
 
+static void process_warning_comment(LexState *ls, const char *comment) {
+  if (strncmp(comment, "@warnings", 15) != 0) return;
+  comment += 15;
+
+  if (*comment == ':') comment++;
+  else if (*comment == ' ') comment++;
+  else return;
+
+  /* Skip spaces */
+  while (*comment == ' ') comment++;
+
+  if (strstr(comment, "disable-next")) {
+    ls->disable_warnings_next_line = ls->linenumber + 1;
+    return;
+  }
+
+  /* Split by comma */
+  char buffer[256];
+  const char *start = comment;
+  while (*start) {
+    const char *end = strchr(start, ',');
+    if (!end) end = start + strlen(start);
+
+    size_t len = end - start;
+    if (len >= sizeof(buffer)) len = sizeof(buffer) - 1;
+    memcpy(buffer, start, len);
+    buffer[len] = '\0';
+
+    /* Trim spaces from buffer */
+    char *p = buffer;
+    while (*p == ' ') p++;
+    char *endp = p + strlen(p) - 1;
+    while (endp > p && *endp == ' ') *endp-- = '\0';
+
+    /* Process directive: enable-TYPE, disable-TYPE, error-TYPE */
+    WarningState state = WS_ON;
+    const char *name = p;
+    if (strncmp(p, "enable-", 7) == 0) {
+      state = WS_ON;
+      name = p + 7;
+    } else if (strncmp(p, "disable-", 8) == 0) {
+      state = WS_OFF;
+      name = p + 8;
+    } else if (strncmp(p, "error-", 6) == 0) {
+      state = WS_ERROR;
+      name = p + 6;
+    }
+
+    int i;
+    for (i = 0; i < WT_COUNT; i++) {
+      if (strcmp(name, luaX_warnNames[i]) == 0) {
+        if (i == WT_ALL) {
+          int j;
+          for (j = 0; j < WT_COUNT; j++) ls->warnings.states[j] = state;
+        } else {
+          ls->warnings.states[i] = state;
+        }
+        break;
+      }
+    }
+
+    if (*end == '\0') break;
+    start = end + 1;
+  }
+}
 
 static void save (LexState *ls, int c) {
   Mbuffer *b = ls->buff;
@@ -180,6 +410,21 @@ void luaX_init (lua_State *L) {
   }
 }
 
+void luaX_warning (LexState *ls, const char *msg, WarningType wt) {
+  if (ls->linenumber == ls->disable_warnings_next_line) return;
+  if (ls->warnings.states[wt] == WS_OFF) return;
+
+  const char *warnName = luaX_warnNames[wt];
+  if (ls->warnings.states[wt] == WS_ERROR) {
+    const char *err = luaO_pushfstring(ls->L, "%s [error: %s]", msg, warnName);
+    luaX_syntaxerror(ls, err);
+  } else {
+    const char *formatted = luaO_pushfstring(ls->L, "%s:%d: warning: %s [%s]\n",
+                                             getstr(ls->source), ls->linenumber, msg, warnName);
+    lua_warning(ls->L, formatted, 0);
+    lua_pop(ls->L, 1);
+  }
+}
 
 const char *luaX_token2str (LexState *ls, int token) {
   if (token < FIRST_RESERVED) {  /* single-byte symbols? */
@@ -236,10 +481,72 @@ static const char *txtToken (LexState *ls, int token) {
   }
 }
 
+static char *get_source_line(LexState *ls, int line, int *col) {
+  if (getstr(ls->source)[0] != '@') return NULL;
+  FILE *f = fopen(getstr(ls->source) + 1, "rb");
+  if (f == NULL) return NULL;
+
+  int current_line = 1;
+  long line_start_offset = 0;
+  int c;
+  long offset = 0;
+
+  while (current_line < line) {
+     while ((c = fgetc(f)) != EOF && c != '\n') {
+        offset++;
+     }
+     if (c == EOF) { fclose(f); return NULL; }
+     offset++; /* newline */
+     current_line++;
+     line_start_offset = offset;
+  }
+
+  size_t bufsize = 128;
+  char *buffer = (char*)malloc(bufsize);
+  if (!buffer) { fclose(f); return NULL; }
+
+  size_t len = 0;
+  while ((c = fgetc(f)) != EOF && c != '\n' && c != '\r') {
+      if (len + 1 >= bufsize) {
+          bufsize *= 2;
+          char *newbuf = (char*)realloc(buffer, bufsize);
+          if (!newbuf) { free(buffer); fclose(f); return NULL; }
+          buffer = newbuf;
+      }
+      buffer[len++] = (char)c;
+  }
+  buffer[len] = '\0';
+  fclose(f);
+
+  if (col) {
+      *col = ls->tokpos - (int)line_start_offset;
+      if (*col < 0) *col = 0;
+      if (*col > (int)len) *col = (int)len;
+  }
+
+  return buffer;
+}
 
 static l_noret lexerror (LexState *ls, const char *msg, int token) {
   msg = luaG_addinfo(ls->L, msg, ls->source, ls->linenumber);
-  if (token) {
+
+  int col = 0;
+  char *line_content = get_source_line(ls, ls->linenumber, &col);
+  if (line_content) {
+      luaO_pushfstring(ls->L, "%s\n    %d | %s\n      | ", msg, ls->linenumber, line_content);
+      char *spaces = (char*)malloc(col + 1);
+      if (spaces) {
+        memset(spaces, ' ', col);
+        spaces[col] = '\0';
+        lua_pushstring(ls->L, spaces);
+        free(spaces);
+      } else {
+        lua_pushstring(ls->L, "");
+      }
+      luaO_pushfstring(ls->L, "^ here");
+      lua_concat(ls->L, 3);
+      free(line_content);
+  } else if (token) {
     luaO_pushfstring(ls->L,
                      "=============================\n"
                      "[X] [Lua语法错误]\n\n"
@@ -314,6 +621,7 @@ void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source,
   ls->L = L;
   ls->current = firstchar;
   ls->lookahead.token = TK_EOS;  /* no look-ahead token */
+  ls->lookahead2.token = TK_EOS; /* no look-ahead token */
   ls->z = z;
   ls->fs = NULL;
   ls->linenumber = 1;
@@ -327,6 +635,19 @@ void luaX_setinput (lua_State *L, LexState *ls, ZIO *z, TString *source,
   ls->pending_tokens = NULL;
   ls->npending = 0;
   ls->defines = NULL;
+
+  /* Initialize warnings */
+  ls->disable_warnings_next_line = -1;
+  {
+    int i;
+    for (i = 0; i < WT_COUNT; i++) ls->warnings.states[i] = WS_ON;
+    ls->warnings.states[WT_GLOBAL_SHADOW] = WS_OFF;
+    ls->warnings.states[WT_NON_PORTABLE_CODE] = WS_OFF;
+    ls->warnings.states[WT_NON_PORTABLE_BYTECODE] = WS_OFF;
+    ls->warnings.states[WT_NON_PORTABLE_NAME] = WS_OFF;
+    ls->warnings.states[WT_IMPLICIT_GLOBAL] = WS_OFF;
+    ls->warnings.states[WT_ALL] = WS_OFF;
+  }
 
 #if defined(LUA_COMPAT_GLOBAL)
   /* compatibility mode: "global" is not a reserved word */
@@ -389,8 +710,12 @@ static int read_numeral (LexState *ls, SemInfo *seminfo) {
   save_and_next(ls);
   if (first == '0' && check_next2(ls, "xX"))  /* hexadecimal? */
     expo = "Pp";
+  else if (first == '0' && check_next2(ls, "bB"))  /* binary? */
+    expo = NULL;
+  else if (first == '0' && check_next2(ls, "oO"))  /* octal? */
+    expo = NULL;
   for (;;) {
-    if (check_next2(ls, expo))  /* exponent mark? */
+    if (expo && check_next2(ls, expo))  /* exponent mark? */
       check_next2(ls, "-+");  /* optional exponent sign */
     else if (ls->current == '_')  /* underscore as visual separator? */
       next(ls);  /* skip underscore, don't save it */
@@ -756,8 +1081,19 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           }
         }
         /* else short comment */
-        while (!currIsNewline(ls) && ls->current != EOZ)
+        luaZ_resetbuffer(ls->buff);
+        while (!currIsNewline(ls) && ls->current != EOZ) {
+          save(ls, ls->current);
           next(ls);  /* skip until end of line (or end of file) */
+        }
+     
+        save(ls, '\0');
+        const char *comment = luaZ_buffer(ls->buff);
+        const char *directive = strstr(comment, "@warnings");
+        if (directive) {
+           process_warning_comment(ls, directive);
+        }
+        luaZ_resetbuffer(ls->buff); /* Reset for next token */
         break;
       }
       case '[': {  /* long string or simply '[' */
@@ -988,7 +1324,12 @@ void luaX_next (LexState *ls) {
   ls->tokpos = ls->curpos;
   if (ls->lookahead.token != TK_EOS) {  /* is there a look-ahead token? */
     ls->t = ls->lookahead;  /* use this one */
-    ls->lookahead.token = TK_EOS;  /* and discharge it */
+    if (ls->lookahead2.token != TK_EOS) {
+       ls->lookahead = ls->lookahead2;
+       ls->lookahead2.token = TK_EOS;
+    } else {
+       ls->lookahead.token = TK_EOS;  /* and discharge it */
+    }
   }
   else
     ls->t.token = llex(ls, &ls->t.seminfo);  /* read next token */
@@ -996,8 +1337,17 @@ void luaX_next (LexState *ls) {
 
 
 int luaX_lookahead (LexState *ls) {
-  lua_assert(ls->lookahead.token == TK_EOS);
+  if (ls->lookahead.token != TK_EOS)
+    return ls->lookahead.token;
   ls->lookahead.token = llex(ls, &ls->lookahead.seminfo);
   return ls->lookahead.token;
 }
 
+int luaX_lookahead2 (LexState *ls) {
+  if (ls->lookahead.token == TK_EOS)
+    ls->lookahead.token = llex(ls, &ls->lookahead.seminfo);
+  if (ls->lookahead2.token != TK_EOS)
+    return ls->lookahead2.token;
+  ls->lookahead2.token = llex(ls, &ls->lookahead2.seminfo);
+  return ls->lookahead2.token;
+}

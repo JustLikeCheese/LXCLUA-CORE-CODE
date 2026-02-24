@@ -217,6 +217,7 @@ Number = {DecNumber} | {HexNumber} | {BinNumber}
   "goto"                    { return GOTO; }
   "if"                      { return IF; }
   "in"                      { return IN; }
+  "as"                      { return AS; }
   "is"                      { return IS; }
   "lambda"                  { return LAMBDA; }
   "local"                   { return LOCAL; }
@@ -237,6 +238,7 @@ Number = {DecNumber} | {HexNumber} | {BinNumber}
   "keyword"                 { return KEYWORD; }
   "operator"                { return OPERATOR_KW; }
   "$"                       { return DOLLAR; }
+  "export"                  { return EXPORT; }
 
 
   /* OOP 面向对象关键字 */
@@ -245,13 +247,28 @@ Number = {DecNumber} | {HexNumber} | {BinNumber}
   "extends"                 { return EXTENDS; }
   "final"                   { return FINAL; }
   "implements"              { return IMPLEMENTS; }
-  "ointerface"              { return INTERFACE; }
-  "onew"                    { return NEW; }
-  "osuper"                  { return SUPER; }
+  "interface"              { return INTERFACE; }
+  "new"                    { return NEW; }
+  "super"                  { return SUPER; }
   "private"                 { return PRIVATE; }
   "protected"               { return PROTECTED; }
   "public"                  { return PUBLIC; }
   "static"                  { return STATIC; }
+  "async"                   { return ASYNC; }
+  "await"                   { return AWAIT; }
+  "struct"                  { return STRUCT; }
+  "superstruct"             { return SUPERSTRUCT; }
+  "concept"                 { return CONCEPT; }
+  "namespace"               { return NAMESPACE; }
+  "using"                  { return USING; }
+  "requires"               { return REQUIRES; }
+  "bool"                   { return BOOL; }
+  "char"                   { return CHAR; }
+  "double"                 { return DOUBLE; }
+  "float"                  { return FLOAT; }
+  "int"                    { return TYPE_INT; }
+  "long"                   { return LONG; }
+  "void"                   { return VOID; }
 
   /* region/endregion 注释 */
   "--region"[^\r\n]*        { return REGION; }

@@ -26,6 +26,7 @@ public enum Tokens {
     ENUM,
     FOR,
     IN,
+    AS,             // as (类型转换)
     LOCAL,
     REPEAT,
     RETURN,
@@ -126,9 +127,12 @@ public enum Tokens {
     LOADSTRING,     // loadstring (加载字符串代码)
     DOFILE,         // dofile (执行文件)
     LOADFILE,       // loadfile (加载文件)
+    LOADSFILE,      // loadsfile (加载文件)
     RAWLEN,         // rawlen (原始长度)
     DEBUG,          // debug (调试库)
     PACKAGE,        // package (包管理)
+    EXPORT,         // export (导出关键字)
+    DEFER,          // defer (延迟执行)
     
     // OOP 面向对象关键字
     ABSTRACT,       // abstract (抽象方法/类)
@@ -143,7 +147,37 @@ public enum Tokens {
     PUBLIC,         // public (公开成员)
     STATIC,         // static (静态成员)
     SUPER,          // super (调用父类)
+
+    // 异步关键字
+    ASYNC,          // async (异步函数声明)
+    AWAIT,          // await (等待异步结果)
+
+    // 结构体关键字
+    STRUCT,         // struct (结构体定义)
+    SUPERSTRUCT,    // superstruct (超级结构体)
+
+    // 概念/约束关键字
+    CONCEPT,        // concept (模板约束)
+
+    // 管道运算符
+    PIPE,           // |> 管道运算符
+    SAFE_PIPE,     // |>? 安全管道
+    REV_PIPE,       // <| 反向管道
+
+    // 命名空间关键字
+    NAMESPACE,      // namespace (命名空间)
+    USING,          // using (使用命名空间/类型)
+    REQUIRES,       // requires (依赖声明)
     
+    // 类型关键字
+    BOOL,           // bool (布尔类型)
+    CHAR,           // char (字符类型)
+    DOUBLE,         // double (双精度浮点)
+    FLOAT,          // float (单精度浮点)
+    TYPE_INT,       // int (整数类型)
+    LONG,           // long (长整数)
+    VOID,           // void (无返回值)
+
     ARROW_LEFT_LONG,      // <--
     ARROW_RIGHT_LONG,     // -->
     SPACESHIP,            // <=>

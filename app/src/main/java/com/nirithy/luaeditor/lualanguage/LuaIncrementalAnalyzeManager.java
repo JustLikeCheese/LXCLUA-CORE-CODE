@@ -143,10 +143,10 @@ public class LuaIncrementalAnalyzeManager
             "pairs", "ipairs", "next", "select", "unpack", "pcall", "xpcall",
             "error", "assert", "collectgarbage", "dofile", "getmetatable",
             "setmetatable", "rawget", "rawset", "rawequal", "rawlen",
-            "require", "load", "loadfile", "loadstring",
+            "require", "load", "loadfile","loadsfile", "loadstring",
             // 标准库
             "string", "table", "math", "io", "os", "debug", "coroutine", "package",
-            "utf8", "bit32",
+            "utf8", "bit32","thread",
             // 常用全局对象
             "_G", "_VERSION", "_ENV", "arg",
             // 你项目中的全局对象
@@ -225,8 +225,8 @@ public class LuaIncrementalAnalyzeManager
     private boolean isLuaKeyword(String word) {
         Set<String> keywords = new HashSet<>(Arrays.asList(
             "and", "break", "do", "else", "elseif", "end", "false", "for",
-            "function", "goto", "if", "in", "local", "nil", "not", "or",
-            "repeat", "return", "then", "true", "until", "while"
+            "function", "goto", "if", "in", "as", "local", "nil", "not", "or",
+            "repeat", "return", "then", "true", "until", "while", "async", "await", "export"
         ));
         return keywords.contains(word);
     }
@@ -860,6 +860,7 @@ public class LuaIncrementalAnalyzeManager
                 case ENUM:
                 case FOR:
                 case IN:
+                case AS:
                 case IS:
                 case REPEAT:
                 case RETURN:
@@ -901,6 +902,23 @@ public class LuaIncrementalAnalyzeManager
                 case PUBLIC:
                 case STATIC:
                 case SUPER:
+                case ASYNC:
+                case AWAIT:
+                case EXPORT:
+                case DEFER:
+                case STRUCT:
+                case SUPERSTRUCT:
+                case CONCEPT:
+                case NAMESPACE:
+                case USING:
+                case REQUIRES:
+                case BOOL:
+                case CHAR:
+                case DOUBLE:
+                case FLOAT:
+                case TYPE_INT:
+                case LONG:
+                case VOID:
                     classNamePrevious = false;
                     span =
                             SpanFactory.obtain(

@@ -24,9 +24,11 @@
 #include "lfunc.h"
 #include "ldo.h"
 #include "lgc.h"
+#include "lclass.h"
+#include "lapi.h"
 #include <stdint.h>
 
-#if defined(__ANDROID__) && defined(ANDROID_NDK)
+#if defined(__ANDROID__) && !defined(__NDK_MAJOR__)
 #include <android/log.h>
 #define LOG_TAG "lua"
 #define LOGD(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -259,6 +261,10 @@ static int luaB_tonumber (lua_State *L) {
       lua_settop(L, 1);  /* yes; return it */
       return 1;
     }
+    else if (lua_type(L, 1) == LUA_TPOINTER) {
+      lua_pushinteger(L, (lua_Integer)(L_P2I)lua_topointer(L, 1));
+      return 1;
+    }
     else {
       size_t l;
       const char *s = lua_tolstring(L, 1, &l);
@@ -300,6 +306,10 @@ static int luaB_tointeger (lua_State *L) {
     }
     else if (lua_type(L, 1) == LUA_TBOOLEAN) {
         lua_pushinteger(L, lua_toboolean(L, 1) ? 1 : 0);
+        return 1;
+    }
+    else if (lua_type(L, 1) == LUA_TPOINTER) {
+        lua_pushinteger(L, (lua_Integer)(L_P2I)lua_topointer(L, 1));
         return 1;
     }
     else {
@@ -349,7 +359,7 @@ static int luaB_getmetatable (lua_State *L) {
 static int luaB_setmetatable (lua_State *L) {
   int t = lua_type(L, 2);
   luaL_checktype(L, 1, LUA_TTABLE);
-  luaL_argexpected(L, t == LUA_TNIL || t == LUA_TTABLE, 2, "nil or table");
+  luaL_argexpected(L, t == LUA_TNIL || t == LUA_TTABLE || t == LUA_TSUPERSTRUCT, 2, "nil, table or superstruct");
   
   if (l_unlikely(luaL_getmetafield(L, 1, "__metatable") != LUA_TNIL))
     return luaL_error(L, "无法修改受保护的元表");
@@ -481,6 +491,16 @@ static int luaB_collectgarbage (lua_State *L) {
 }
 
 
+static int luaB_isstruct (lua_State *L) {
+  lua_pushboolean(L, lua_type(L, 1) == LUA_TSTRUCT);
+  return 1;
+}
+
+static int luaB_isinstance (lua_State *L) {
+  lua_pushboolean(L, luaC_instanceof(L, 1, 2));
+  return 1;
+}
+
 static int luaB_type (lua_State *L) {
   int t = lua_type(L, 1);
   luaL_argcheck(L, t != LUA_TNONE, 1, "value expected");
@@ -511,8 +531,9 @@ static int luaB_type (lua_State *L) {
 }
 
 
-static int luaB_next (lua_State *L) {
-  luaL_checktype(L, 1, LUA_TTABLE);
+int luaB_next (lua_State *L) {
+  int t = lua_type(L, 1);
+  luaL_argcheck(L, t == LUA_TTABLE || t == LUA_TSUPERSTRUCT, 1, "table or superstruct expected");
   lua_settop(L, 2);  /* create a 2nd argument if there isn't one */
   if (lua_next(L, 1))
     return 2;
@@ -596,6 +617,21 @@ static int luaB_loadfile (lua_State *L) {
   const char *mode = luaL_optstring(L, 2, NULL);
   int env = (!lua_isnone(L, 3) ? 3 : 0);  /* 'env' index or 0 if no 'env' */
   int status = luaL_loadfilex(L, fname, mode);
+  return load_aux(L, status, env);
+}
+
+static int luaB_loadsfile (lua_State *L) {
+  const char *fname = luaL_optstring(L, 1, NULL);
+  const char *mode = luaL_optstring(L, 2, NULL);
+  char new_mode[16];
+  if (mode) {
+    if (strlen(mode) > 10) return luaL_error(L, "mode string too long");
+    snprintf(new_mode, sizeof(new_mode), "%sS", mode);
+  } else {
+    strcpy(new_mode, "btS");
+  }
+  int env = (!lua_isnone(L, 3) ? 3 : 0);  /* 'env' index or 0 if no 'env' */
+  int status = luaL_loadfilex(L, fname, new_mode);
   return load_aux(L, status, env);
 }
 
@@ -890,7 +926,80 @@ static int is_value_equal_package_loaded(lua_State *L, int value_idx) {
   return equal;
 }
 
-static void format_table(lua_State *L, int idx, luaL_Buffer *buffer, int indent, int depth, VisitedTables *visited, const char *current_path) {
+/* Helper function to get/create a table in Registry */
+static int get_registry_table(lua_State *L, const char *key) {
+  lua_getfield(L, LUA_REGISTRYINDEX, key);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, LUA_REGISTRYINDEX, key);
+  }
+  return 1;
+}
+
+static int luaB_lxc_get_cmds(lua_State *L) {
+  return get_registry_table(L, "LXC_CMDS");
+}
+
+static int luaB_lxc_get_ops(lua_State *L) {
+  return get_registry_table(L, "LXC_OPERATORS");
+}
+
+/* Custom buffer to avoid Lua stack issues during recursive traversal */
+typedef struct {
+  char *b;
+  size_t len;
+  size_t cap;
+} DumpBuffer;
+
+static void db_init(DumpBuffer *db) {
+  db->b = NULL;
+  db->len = 0;
+  db->cap = 0;
+}
+
+static void db_addlstring(lua_State *L, DumpBuffer *db, const char *s, size_t l) {
+  if (db->len + l > db->cap) {
+    size_t new_cap = db->cap ? db->cap * 2 : 128;
+    while (db->len + l > new_cap) new_cap *= 2;
+    char *new_b = (char *)realloc(db->b, new_cap);
+    if (!new_b) {
+      if (db->b) free(db->b);
+      luaL_error(L, "not enough memory");
+    }
+    db->b = new_b;
+    db->cap = new_cap;
+  }
+  memcpy(db->b + db->len, s, l);
+  db->len += l;
+}
+
+static void db_addstring(lua_State *L, DumpBuffer *db, const char *s) {
+  db_addlstring(L, db, s, strlen(s));
+}
+
+static void db_addchar(lua_State *L, DumpBuffer *db, char c) {
+  db_addlstring(L, db, &c, 1);
+}
+
+static void db_addvalue(lua_State *L, DumpBuffer *db) {
+  size_t l;
+  const char *s = lua_tolstring(L, -1, &l);
+  if (s == NULL) {
+    s = "(null)";
+    l = 6;
+  }
+  db_addlstring(L, db, s, l);
+  lua_pop(L, 1);
+}
+
+static void db_pushresult(lua_State *L, DumpBuffer *db) {
+  lua_pushlstring(L, db->b, db->len);
+  if (db->b) free(db->b);
+}
+
+static void format_table(lua_State *L, int idx, DumpBuffer *buffer, int indent, int depth, VisitedTables *visited, const char *current_path) {
   int i;
   
   /* 将相对索引转换为绝对索引 */
@@ -904,7 +1013,7 @@ static void format_table(lua_State *L, int idx, luaL_Buffer *buffer, int indent,
       if (lua_pcall(L, 1, 1, 0) == 0) {
         const char *str = lua_tostring(L, -1);
         if (str != NULL) {
-          luaL_addstring(buffer, str);
+          db_addstring(L, buffer, str);
           lua_pop(L, 2);  /* pop result and metatable */
           return;
         }
@@ -916,11 +1025,11 @@ static void format_table(lua_State *L, int idx, luaL_Buffer *buffer, int indent,
     lua_pop(L, 1);
   }
   
-  luaL_addstring(buffer, "{");
+  db_addstring(L, buffer, "{");
   
   /* 限制递归深度 */
   if (depth > 20) {
-    luaL_addstring(buffer, "...}");
+    db_addstring(L, buffer, "...}");
     return;
   }
   
@@ -934,24 +1043,24 @@ static void format_table(lua_State *L, int idx, luaL_Buffer *buffer, int indent,
     /* 检查值是否是_G */
     if (lua_istable(L, value_idx) && is_value_equal_G(L, value_idx)) {
       /* 值是_G，输出 key = _G */
-      if (!first) luaL_addstring(buffer, ",");
+      if (!first) db_addstring(L, buffer, ",");
       first = 0;
-      luaL_addstring(buffer, "\n");
-      for (i = 0; i < indent + 2; i++) luaL_addchar(buffer, ' ');
+      db_addstring(L, buffer, "\n");
+      for (i = 0; i < indent + 2; i++) db_addchar(L, buffer, ' ');
       
       /* 输出键 */
       lua_pushvalue(L, key_idx);
       if (lua_type(L, -1) == LUA_TSTRING) {
-        luaL_addstring(buffer, "[\"");
-        luaL_addstring(buffer, lua_tostring(L, -1));
-        luaL_addstring(buffer, "\"]");
+        db_addstring(L, buffer, "[\"");
+        db_addstring(L, buffer, lua_tostring(L, -1));
+        db_addstring(L, buffer, "\"]");
       } else {
         lua_pushfstring(L, "[%d]", (int)lua_tointeger(L, -1));
-        luaL_addvalue(buffer);
+        db_addvalue(L, buffer);
       }
       lua_pop(L, 1);
       
-      luaL_addstring(buffer, " = _G");
+      db_addstring(L, buffer, " = _G");
       lua_pop(L, 1);  /* pop value, keep key for next iteration */
       continue;
     }
@@ -962,53 +1071,53 @@ static void format_table(lua_State *L, int idx, luaL_Buffer *buffer, int indent,
       continue;
     }
     
-    if (!first) luaL_addstring(buffer, ",");
+    if (!first) db_addstring(L, buffer, ",");
     first = 0;
-    luaL_addstring(buffer, "\n");
-    for (i = 0; i < indent + 2; i++) luaL_addchar(buffer, ' ');
+    db_addstring(L, buffer, "\n");
+    for (i = 0; i < indent + 2; i++) db_addchar(L, buffer, ' ');
     
     /* 构建键的字符串表示，用于路径 */
     char key_str[64] = "";
     lua_pushvalue(L, key_idx);
     if (lua_type(L, -1) == LUA_TSTRING) {
       snprintf(key_str, sizeof(key_str), "%s", lua_tostring(L, -1));
-      luaL_addstring(buffer, "[\"");
-      luaL_addstring(buffer, key_str);
-      luaL_addstring(buffer, "\"]");
+      db_addstring(L, buffer, "[\"");
+      db_addstring(L, buffer, key_str);
+      db_addstring(L, buffer, "\"]");
     } else if (lua_type(L, -1) == LUA_TNUMBER) {
       snprintf(key_str, sizeof(key_str), "%d", (int)lua_tointeger(L, -1));
       lua_pushfstring(L, "[%s]", key_str);
-      luaL_addvalue(buffer);
+      db_addvalue(L, buffer);
     } else {
-      luaL_addstring(buffer, "[");
+      db_addstring(L, buffer, "[");
       luaL_tolstring(L, -1, NULL);
-      luaL_addvalue(buffer);
-      luaL_addstring(buffer, "]");
+      db_addvalue(L, buffer);
+      db_addstring(L, buffer, "]");
       snprintf(key_str, sizeof(key_str), "?");
     }
     lua_pop(L, 1);
     
-    luaL_addstring(buffer, " = ");
+    db_addstring(L, buffer, " = ");
     
     /* 格式化值 */
     int vt = lua_type(L, value_idx);
     if (vt == LUA_TNUMBER) {
       lua_pushvalue(L, value_idx);
-      luaL_addstring(buffer, lua_tostring(L, -1));
+      db_addstring(L, buffer, lua_tostring(L, -1));
       lua_pop(L, 1);
     } else if (vt == LUA_TSTRING) {
       const char *s = lua_tostring(L, value_idx);
-      luaL_addstring(buffer, "\"");
+      db_addstring(L, buffer, "\"");
       if (s && strlen(s) > 100) {
         char truncated[104];
         strncpy(truncated, s, 100);
         truncated[100] = '\0';
-        luaL_addstring(buffer, truncated);
-        luaL_addstring(buffer, "...");
+        db_addstring(L, buffer, truncated);
+        db_addstring(L, buffer, "...");
       } else {
-        luaL_addstring(buffer, s ? s : "");
+        db_addstring(L, buffer, s ? s : "");
       }
-      luaL_addstring(buffer, "\"");
+      db_addstring(L, buffer, "\"");
     } else if (vt == LUA_TTABLE) {
       /* 检查循环引用 */
       const void *tbl_ptr = lua_topointer(L, value_idx);
@@ -1018,35 +1127,35 @@ static void format_table(lua_State *L, int idx, luaL_Buffer *buffer, int indent,
       const char *prev_path = check_and_add_visited(visited, tbl_ptr, new_path);
       if (prev_path) {
         /* 已访问过，输出路径引用 */
-        luaL_addstring(buffer, prev_path);
+        db_addstring(L, buffer, prev_path);
       } else {
         /* 递归处理 */
         format_table(L, value_idx, buffer, indent + 2, depth + 1, visited, new_path);
       }
     } else if (vt == LUA_TBOOLEAN) {
-      luaL_addstring(buffer, lua_toboolean(L, value_idx) ? "true" : "false");
+      db_addstring(L, buffer, lua_toboolean(L, value_idx) ? "true" : "false");
     } else if (vt == LUA_TFUNCTION) {
-      luaL_addstring(buffer, "<function>");
+      db_addstring(L, buffer, "<function>");
     } else if (vt == LUA_TUSERDATA) {
-      luaL_addstring(buffer, "<userdata>");
+      db_addstring(L, buffer, "<userdata>");
     } else if (vt == LUA_TTHREAD) {
-      luaL_addstring(buffer, "<thread>");
+      db_addstring(L, buffer, "<thread>");
     } else if (vt == LUA_TLIGHTUSERDATA) {
-      luaL_addstring(buffer, "<lightuserdata>");
+      db_addstring(L, buffer, "<lightuserdata>");
     } else if (vt == LUA_TNIL) {
-      luaL_addstring(buffer, "nil");
+      db_addstring(L, buffer, "nil");
     } else {
-      luaL_addstring(buffer, "<unknown>");
+      db_addstring(L, buffer, "<unknown>");
     }
     
     lua_pop(L, 1);  /* pop value, keep key for next iteration */
   }
   
   if (!first) {
-    luaL_addstring(buffer, "\n");
-    for (i = 0; i < indent; i++) luaL_addchar(buffer, ' ');
+    db_addstring(L, buffer, "\n");
+    for (i = 0; i < indent; i++) db_addchar(L, buffer, ' ');
   }
-  luaL_addstring(buffer, "}");
+  db_addstring(L, buffer, "}");
 }
 
 /* base64解码 */
@@ -1174,8 +1283,8 @@ static int luaB_dump (lua_State *L) {
   switch (t) {
     case LUA_TTABLE: {
       // 把表格式化转字符串
-      luaL_Buffer buffer;
-      luaL_buffinit(L, &buffer);
+      DumpBuffer buffer;
+      db_init(&buffer);
       
       /* 初始化已访问表记录 */
       VisitedTables visited;
@@ -1189,7 +1298,7 @@ static int luaB_dump (lua_State *L) {
       /* 清理已访问表记录 */
       reset_visited_tables(&visited);
       
-      luaL_pushresult(&buffer);
+      db_pushresult(L, &buffer);
       return 1;
     }
     case LUA_TSTRING: {
@@ -1308,6 +1417,7 @@ static const luaL_Reg env_funcs[] = {
   {"getmetatable", luaB_getmetatable},
   {"ipairs", luaB_ipairs},
   {"loadfile", luaB_loadfile},
+  {"loadsfile", luaB_loadsfile},
   {"load", luaB_load},
   {"loadstring", luaB_load},
   {"next", luaB_next},
@@ -1344,52 +1454,102 @@ static int protected_table_newindex (lua_State *L) {
   return luaL_error(L, "cannot modify protected function table");
 }
 
-static int luaB_getfenv (lua_State *L) {
-  if (lua_isnoneornil(L, 1)) {
-    // 没有参数，返回当前函数的环境
-    lua_getglobal(L, "_ENV");
+/*
+** Auxiliary function to get the function to be treated by 'setfenv'/'getfenv'.
+** Returns 1 if a function was pushed, 0 if level 0 (global).
+*/
+static int getfunc (lua_State *L, int opt) {
+  if (lua_isfunction(L, 1)) {
+    lua_pushvalue(L, 1);
     return 1;
-  } else {
-    // 有参数，返回指定函数或线程的环境
-    int type = lua_type(L, 1);
-    if (type == LUA_TFUNCTION || type == LUA_TTHREAD) {
-      // 获取函数或线程的环境
-      lua_getuservalue(L, 1);
-      if (lua_isnil(L, -1)) {
-        // 如果没有环境，返回全局环境
-        lua_pop(L, 1);
-        lua_getglobal(L, "_ENV");
-      }
+  }
+  else {
+    lua_Debug ar;
+    int level = opt ? (int)luaL_optinteger(L, 1, 1) : (int)luaL_checkinteger(L, 1);
+    luaL_argcheck(L, level >= 0, 1, "level must be non-negative");
+    if (level == 0) return 0;
+    if (lua_getstack(L, level, &ar)) {
+      lua_getinfo(L, "f", &ar);  /* push function */
+      if (lua_isnil(L, -1))
+        return luaL_error(L, "unable to retrieve function from stack level %d", level);
       return 1;
-    } else if (type == LUA_TNUMBER) {
-      // 旧版Lua 5.1中，getfenv(1)获取当前函数的环境
-      // 这里模拟这个行为
-      lua_getglobal(L, "_ENV");
-      return 1;
-    } else {
-      return luaL_error(L, "错误的参数 #1 传递给 'getfenv' (需要函数、线程或数字)");
     }
+    else
+      return luaL_argerror(L, 1, "invalid level");
   }
 }
 
+static int luaB_getfenv (lua_State *L) {
+  if (!getfunc(L, 1)) {  /* level 0? */
+    lua_pushglobaltable(L);
+    return 1;
+  }
+
+  if (lua_iscfunction(L, -1)) {  /* is a C function? */
+    lua_pushglobaltable(L);  /* default to global env */
+    return 1;
+  }
+
+  const char *name;
+  int i = 1;
+  while ((name = lua_getupvalue(L, -1, i)) != NULL) {
+    if (strcmp(name, "_ENV") == 0) {
+      return 1;  /* return _ENV value */
+    }
+    lua_pop(L, 1);  /* remove value */
+    i++;
+  }
+
+  /* _ENV not found, return global env as fallback */
+  lua_pushglobaltable(L);
+  return 1;
+}
+
 static int luaB_setfenv (lua_State *L) {
-  int type = lua_type(L, 1);
   luaL_checktype(L, 2, LUA_TTABLE);
   
-  if (type == LUA_TFUNCTION || type == LUA_TTHREAD) {
-    // 设置函数或线程的环境
-    lua_setuservalue(L, 1);
-    lua_pushvalue(L, 2);  // 返回新的环境
-    return 1;
-  } else if (type == LUA_TNUMBER) {
-    // 旧版Lua 5.1中，setfenv(1, table)设置当前函数的环境
-    // 这里模拟这个行为，实际上是修改全局_ENV
-    lua_setglobal(L, "_ENV");
-    lua_pushvalue(L, 2);  // 返回新的环境
-    return 1;
-  } else {
-    return luaL_error(L, "bad argument #1 to 'setfenv' (function, thread or number expected)");
+  if (!getfunc(L, 0)) {  /* level 0? */
+    lua_pushvalue(L, 2);
+    lua_rawseti(L, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+    return 0;
   }
+
+  if (lua_iscfunction(L, -1)) {
+    return luaL_error(L, "cannot change environment of C function");
+  }
+
+  const char *name;
+  int i = 1;
+  while ((name = lua_getupvalue(L, -1, i)) != NULL) {
+    if (strcmp(name, "_ENV") == 0) {
+      lua_pop(L, 1);  /* pop current value */
+
+      /* Create a dummy closure to hold the new environment upvalue */
+      /* "return _ENV" ensures the upvalue exists and is used */
+      if (luaL_loadstring(L, "return _ENV") != LUA_OK) {
+        return luaL_error(L, "failed to create temporary closure");
+      }
+
+      /* Set the new environment as the upvalue of the dummy closure */
+      lua_pushvalue(L, 2);
+      lua_setupvalue(L, -2, 1);
+
+      /* Join the target function's _ENV upvalue to the dummy closure's upvalue */
+      /* This detaches the target function from its previous shared upvalue */
+      lua_upvaluejoin(L, -2, i, -1, 1);
+
+      lua_pop(L, 1);  /* pop dummy closure */
+
+      lua_pushvalue(L, -1);  /* return function */
+      return 1;
+    }
+    lua_pop(L, 1);  /* remove value */
+    i++;
+  }
+
+  /* If no _ENV found, we cannot change it. Return function anyway. */
+  lua_pushvalue(L, -1);
+  return 1;
 }
 
 static int luaB_getenv_original (lua_State *L) {
@@ -2085,6 +2245,55 @@ static int do_file_test(const char *path, int op_type) {
 ** 返回值：
 **   布尔值，表示测试结果
 */
+static int async_start(lua_State *L) {
+    int n = lua_gettop(L);
+    lua_State *co = lua_newthread(L);
+    lua_insert(L, 1); /* Move thread to bottom (stack: thread, arg1, arg2...) */
+
+    /* Get wrapper from registry */
+    lua_getfield(L, LUA_REGISTRYINDEX, "_ASYNC_LAZY_WRAPPER");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        /* Create wrapper if not exists (lazy init) */
+        if (luaL_dostring(L, "return function(f, ...) coroutine.yield(); return f(...) end") != LUA_OK) {
+            return lua_error(L);
+        }
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, "_ASYNC_LAZY_WRAPPER");
+    }
+    lua_xmove(L, co, 1);
+
+    /* Push function */
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_xmove(L, co, 1);
+
+    /* Move arguments */
+    lua_xmove(L, co, n);
+
+    int nres;
+    int status = lua_resume(co, L, n + 1, &nres);
+
+    if (status != LUA_YIELD) {
+        if (status != LUA_OK) {
+            lua_xmove(co, L, 1);
+            return lua_error(L);
+        }
+    }
+
+    if (nres > 0) {
+        lua_pop(co, nres);
+    }
+
+    return 1;
+}
+
+static int luaB_async_wrap(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    lua_pushvalue(L, 1);
+    lua_pushcclosure(L, async_start, 1);
+    return 1;
+}
+
 static int luaB_test (lua_State *L) {
   int nargs = lua_gettop(L);
   
@@ -2459,7 +2668,283 @@ static int luaB_test (lua_State *L) {
   return 1;
 }
 
+static int luaB_typeof(lua_State *L) {
+  luaL_checkany(L, 1);
+  if (lua_type(L, 1) == LUA_TSTRUCT) {
+    const TValue *o = s2v(L->top.p - 1);
+    Struct *s = structvalue(o);
+    lua_lock(L);
+    sethvalue(L, s2v(L->top.p), s->def);
+    api_incr_top(L);
+    lua_unlock(L);
+    return 1;
+  }
+  lua_pushstring(L, luaL_typename(L, 1));
+  return 1;
+}
+
+static int check_subtype(lua_State *L, int val_idx, int type_idx) {
+    if (lua_type(L, type_idx) == LUA_TSTRING) {
+        const char *tname = lua_tostring(L, type_idx);
+        if (strcmp(tname, "any") == 0) return 1;
+        if (strcmp(tname, "int") == 0 || strcmp(tname, "integer") == 0) return lua_isinteger(L, val_idx);
+        if (strcmp(tname, "number") == 0) return lua_type(L, val_idx) == LUA_TNUMBER;
+        if (strcmp(tname, "float") == 0) return lua_type(L, val_idx) == LUA_TNUMBER;
+        if (strcmp(tname, "string") == 0) return lua_type(L, val_idx) == LUA_TSTRING;
+        if (strcmp(tname, "boolean") == 0) return lua_type(L, val_idx) == LUA_TBOOLEAN;
+        if (strcmp(tname, "table") == 0) return lua_type(L, val_idx) == LUA_TTABLE;
+        if (strcmp(tname, "function") == 0) return lua_type(L, val_idx) == LUA_TFUNCTION;
+        if (strcmp(tname, "thread") == 0) return lua_type(L, val_idx) == LUA_TTHREAD;
+        if (strcmp(tname, "userdata") == 0) return lua_type(L, val_idx) == LUA_TUSERDATA;
+        if (strcmp(tname, "nil") == 0 || strcmp(tname, "void") == 0) return lua_type(L, val_idx) == LUA_TNIL;
+        return 0;
+    }
+    else if (lua_type(L, type_idx) == LUA_TTABLE) {
+        lua_getglobal(L, "string");
+        if (lua_rawequal(L, -1, type_idx)) {
+            lua_pop(L, 1);
+            return lua_type(L, val_idx) == LUA_TSTRING;
+        }
+        lua_pop(L, 1);
+
+        lua_getglobal(L, "table");
+        if (lua_rawequal(L, -1, type_idx)) {
+            lua_pop(L, 1);
+            return lua_type(L, val_idx) == LUA_TTABLE;
+        }
+        lua_pop(L, 1);
+
+        return luaC_instanceof(L, val_idx, type_idx);
+    }
+    else if (lua_type(L, type_idx) == LUA_TFUNCTION) {
+        lua_pushvalue(L, type_idx);
+        lua_pushvalue(L, val_idx);
+        if (lua_pcall(L, 1, 1, 0) == 0) {
+            int res = lua_toboolean(L, -1);
+            lua_pop(L, 1);
+            return res;
+        }
+        lua_pop(L, 1);
+        return 0;
+    }
+    return 0;
+}
+
+static int luaB_issubtype(lua_State *L) {
+  luaL_checkany(L, 1);
+  luaL_checkany(L, 2);
+  lua_pushboolean(L, check_subtype(L, 1, 2));
+  return 1;
+}
+
+static int luaB_check_type(lua_State *L) {
+    luaL_checkany(L, 1);
+    luaL_checkany(L, 2);
+
+    if (lua_isnil(L, 2)) {
+        const char *name = luaL_optstring(L, 3, "?");
+        return luaL_error(L, "Bad type constraint for argument '%s': type or concept is nil (undefined)", name);
+    }
+
+    if (!check_subtype(L, 1, 2)) {
+        const char *name = luaL_optstring(L, 3, "?");
+        const char *expected = "unknown";
+        if (lua_type(L, 2) == LUA_TSTRING) expected = lua_tostring(L, 2);
+        else if (lua_type(L, 2) == LUA_TTABLE) {
+             lua_getfield(L, 2, "__name");
+             if (lua_isstring(L, -1)) expected = lua_tostring(L, -1);
+             else {
+                 lua_getglobal(L, "string");
+                 if (lua_rawequal(L, -1, 2)) expected = "string";
+                 lua_pop(L, 1);
+
+                 if (strcmp(expected, "string") != 0) {
+                     lua_getglobal(L, "table");
+                     if (lua_rawequal(L, -1, 2)) expected = "table";
+                     lua_pop(L, 1);
+                 }
+                 if (strcmp(expected, "unknown") == 0) expected = "table";
+             }
+             lua_pop(L, 1);
+        }
+
+        return luaL_error(L, "Type mismatch for argument '%s': expected %s, got %s",
+                          name, expected, luaL_typename(L, 1));
+    }
+    return 0;
+}
+
+static int luaB_isgeneric(lua_State *L) {
+  if (lua_istable(L, 1)) {
+     lua_pushstring(L, "__is_generic");
+     lua_rawget(L, 1);
+     int res = lua_toboolean(L, -1);
+     lua_pop(L, 1);
+     lua_pushboolean(L, res);
+     return 1;
+  }
+  lua_pushboolean(L, 0);
+  return 1;
+}
+
+static int generic_call (lua_State *L) {
+    /* Upvalues: 1:factory, 2:params, 3:mapping */
+    /* Called as __call(self, args...) */
+    int nargs = lua_gettop(L) - 1;
+    int base = 2;
+    int is_specialization = 0;
+
+    if (nargs >= 1) {
+        int t = lua_type(L, base);
+        if (t == LUA_TSTRING) {
+            const char *s = lua_tostring(L, base);
+            if (strcmp(s, "number")==0 || strcmp(s, "string")==0 ||
+                strcmp(s, "boolean")==0 || strcmp(s, "table")==0 ||
+                strcmp(s, "function")==0 || strcmp(s, "thread")==0 ||
+                strcmp(s, "userdata")==0 || strcmp(s, "nil_type")==0) {
+                is_specialization = 1;
+            }
+        } else if (t == LUA_TTABLE) {
+            /* Check for libraries used as types */
+            lua_getglobal(L, "string");
+            if (lua_rawequal(L, -1, base)) is_specialization = 1;
+            lua_pop(L, 1);
+
+            if (!is_specialization) {
+                lua_getglobal(L, "table");
+                if (lua_rawequal(L, -1, base)) is_specialization = 1;
+                lua_pop(L, 1);
+            }
+
+            if (!is_specialization) {
+                lua_getfield(L, base, "__name");
+                if (!lua_isnil(L, -1)) is_specialization = 1;
+                lua_pop(L, 1);
+            }
+        }
+    }
+
+    if (is_specialization) {
+        lua_pushvalue(L, lua_upvalueindex(1)); /* factory */
+        for (int i = 0; i < nargs; i++) {
+            lua_pushvalue(L, base + i);
+        }
+        lua_call(L, nargs, LUA_MULTRET);
+        return lua_gettop(L) - (nargs + 1);
+    }
+
+    /* Inference */
+    lua_newtable(L); /* inferred map */
+    int inferred_idx = lua_gettop(L);
+
+    int nmapping = luaL_len(L, lua_upvalueindex(3));
+    for (int i = 0; i < nargs && i < nmapping; i++) {
+        lua_rawgeti(L, lua_upvalueindex(3), i + 1);
+        const char *param_type_name = lua_tostring(L, -1);
+        lua_pop(L, 1);
+
+        if (param_type_name) {
+            int nparams = luaL_len(L, lua_upvalueindex(2));
+            int is_generic = 0;
+            for (int j = 1; j <= nparams; j++) {
+                lua_rawgeti(L, lua_upvalueindex(2), j);
+                const char *gp = lua_tostring(L, -1);
+                lua_pop(L, 1);
+                if (gp && strcmp(gp, param_type_name) == 0) {
+                    is_generic = 1;
+                    break;
+                }
+            }
+
+            if (is_generic) {
+                lua_pushvalue(L, base + i);
+                if (lua_type(L, -1) == LUA_TSTRUCT) {
+                    const TValue *o = s2v(L->top.p - 1);
+                    Struct *s = structvalue(o);
+                    lua_lock(L);
+                    sethvalue(L, s2v(L->top.p), s->def);
+                    L->top.p++;
+                    lua_unlock(L);
+                    lua_remove(L, -2);
+                } else {
+                    lua_pushstring(L, luaL_typename(L, -1));
+                    lua_remove(L, -2);
+                }
+
+                lua_pushstring(L, param_type_name);
+                lua_rawget(L, inferred_idx);
+                if (!lua_isnil(L, -1)) {
+                    if (!lua_compare(L, -1, -2, LUA_OPEQ)) {
+                        return luaL_error(L, "type inference failed: inconsistent types for '%s'", param_type_name);
+                    }
+                    lua_pop(L, 2);
+                } else {
+                    lua_pop(L, 1);
+                    lua_pushstring(L, param_type_name);
+                    lua_pushvalue(L, -2);
+                    lua_rawset(L, inferred_idx);
+                    lua_pop(L, 1);
+                }
+            }
+        }
+    }
+
+    int nparams = luaL_len(L, lua_upvalueindex(2));
+    lua_pushvalue(L, lua_upvalueindex(1));
+
+    for (int j = 1; j <= nparams; j++) {
+        lua_rawgeti(L, lua_upvalueindex(2), j);
+        const char *gp = lua_tostring(L, -1);
+        lua_pop(L, 1);
+
+        lua_pushstring(L, gp);
+        lua_rawget(L, inferred_idx);
+        if (lua_isnil(L, -1)) {
+            return luaL_error(L, "could not infer type for '%s'", gp);
+        }
+    }
+
+    lua_call(L, nparams, 1); /* impl */
+
+    int impl_idx = lua_gettop(L);
+    lua_pushvalue(L, impl_idx);
+    for (int i = 0; i < nargs; i++) {
+       lua_pushvalue(L, base + i);
+    }
+    lua_call(L, nargs, LUA_MULTRET);
+    return lua_gettop(L) - impl_idx;
+}
+
+static int luaB_generic_wrap(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    luaL_checktype(L, 3, LUA_TTABLE);
+
+    lua_newtable(L); /* wrapper table */
+    lua_newtable(L); /* metatable */
+
+    lua_pushvalue(L, 1);
+    lua_pushvalue(L, 2);
+    lua_pushvalue(L, 3);
+    lua_pushcclosure(L, generic_call, 3);
+    lua_setfield(L, -2, "__call");
+
+    lua_pushboolean(L, 1);
+    lua_setfield(L, -2, "__is_generic");
+
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
 static const luaL_Reg base_funcs[] = {
+  {"__async_wrap", luaB_async_wrap},
+  {"__generic_wrap", luaB_generic_wrap},
+  {"__check_type", luaB_check_type},
+  {"__lxc_get_cmds", luaB_lxc_get_cmds},
+  {"__lxc_get_ops", luaB_lxc_get_ops},
+  {"typeof", luaB_typeof},
+  {"issubtype", luaB_issubtype},
+  {"isgeneric", luaB_isgeneric},
   {"assert", luaB_assert},
   {"collectgarbage", luaB_collectgarbage},
   {"defer", luaB_defer},
@@ -2476,6 +2961,7 @@ static const luaL_Reg base_funcs[] = {
   {"getmetatable", luaB_getmetatable},
   {"ipairs", luaB_ipairs},
   {"loadfile", luaB_loadfile},
+  {"loadsfile", luaB_loadsfile},
   {"load", luaB_load},
   {"loadstring", luaB_load},
   {"next", luaB_next},
@@ -2498,6 +2984,8 @@ static const luaL_Reg base_funcs[] = {
   {"fwake", luaB_fwake},
   {"wymd5", luaB_md5},
   {"type", luaB_type},
+  {"isstruct", luaB_isstruct},
+  {"isinstance", luaB_isinstance},
   {"__test__", luaB_test},
   {"xpcall", luaB_xpcall},
   /* placeholders */
@@ -2612,10 +3100,6 @@ LUAMOD_API int luaopen_base (lua_State *L) {
   lua_pushliteral(L, LUA_VERSION);
   lua_setfield(L, -2, "_VERSION");
   
-  /* 初始化全局 _CMDS 表，用于存储已注册的命令 */
-  lua_newtable(L);
-  lua_setfield(L, -2, "_CMDS");
-  
   /* 注册 with 语句辅助函数 */
   lua_pushcfunction(L, with_create_env);
   lua_setfield(L, -2, "__with_create_env__");
@@ -2627,6 +3111,16 @@ LUAMOD_API int luaopen_base (lua_State *L) {
   
   /* 允许用户修改全局表的元表，但保留__newindex保护 */
   lua_setmetatable(L, -2);  /* 设置全局表元表 */
+
+  /* Define global type constants */
+  lua_pushliteral(L, "number"); lua_setfield(L, -2, "number");
+  /* string is standard library */
+  lua_pushliteral(L, "boolean"); lua_setfield(L, -2, "boolean");
+  /* table is standard library */
+  /* function is keyword */
+  lua_pushliteral(L, "thread"); lua_setfield(L, -2, "thread");
+  lua_pushliteral(L, "userdata"); lua_setfield(L, -2, "userdata");
+  lua_pushliteral(L, "nil"); lua_setfield(L, -2, "nil_type"); /* avoid clashing with nil value */
   
   return 1;
 }

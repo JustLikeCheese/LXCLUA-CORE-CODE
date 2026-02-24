@@ -23,15 +23,23 @@ public final class AutoCompletePackages {
             "__gc", "__idiv", "__index", "__le", "__len", "__lt", "__mod", "__mul", "__newindex",
             "__pow", "__shl", "__shr", "__sub", "__tostring", "__unm", "_ENV", "_G", "assert",
             "collectgarbage", "dofile", "error", "getfenv", "getmetatable", "ipairs", "load",
-            "loadfile", "loadstring", "module", "next", "pairs", "pcall","proc", "print", "rawequal",
+            "loadfile","loadsfile", "loadstring", "module", "next", "pairs", "pcall","proc", "print", "rawequal",
             "rawget", "rawlen", "rawset", "require", "select", "self", "setfenv", "setmetatable",
             "tointeger", "tonumber", "tostring","toasc2i", "type", "unpack","wymd5", "xpcall", "activity", "call",
              "dump","grand", "each", "fsleep", "fwake", "import", "loadbitmap", "loadlayout", "loadmenu","match", "onDestroy", "onActivityResult", "onResult",
             "onCreateOptionsMenu", "onOptionsItemSelected", "onClick", "onTouch", "onLongClick",
-            "onItemClick", "onItemLongClick", "java",
+            "onItemClick", "onItemLongClick", "java", "async", "await",
             // OOP 面向对象关键字
-            "abstract", "class", "extends", "final", "implements", "ointerface", "onew",
-            "osuper", "private", "protected", "public", "static");
+            "abstract", "class", "extends", "final", "implements", "interface", "new",
+            "super", "superstruct", "private", "protected", "public", "static", "struct", "concept", "namespace",
+            // 类型关键字
+            "bool", "char", "double", "float", "int", "long", "void", "asm", "using", "requires",
+             // 伪指令
+             "$include", "$alias", "$define", "$if", "$else", "$elseif", "$end", "$haltcompiler", "$type", "$declare",
+             // 内联汇编伪指令
+             "comment", "rem", "COMMENT", "REM", "nop", "raw", "emit", "jmpx", "JMPX", "align", "def", "define",
+             "newreg", "getglobal", "setglobal", "_print", "asmprint", "_assert", "asmassert", "_info", "asminfo",
+             "db", "dw", "dd", "str", "rep", "repeat", "junk", "garbage", "_if", "asmif", "_else", "asmelse", "_endif", "asmend");
 
     public static final Map<String, List<String>> DEFAULT_PACKAGES = new HashMap<String, List<String>>() {
         {
@@ -70,7 +78,7 @@ public final class AutoCompletePackages {
              // 新增（上面缺少的）
              "aes_decrypt", "aes_encrypt", "contains", "crc32", "endswith", "escape",
              "fromhex", "hex", "imageresize", "ltrim", "pack", "packsize", "rtrim",
-             "sha256", "split", "startswith", "trim", "unpack"
+             "sha256", "split", "startswith", "trim", "unpack","envelop"
             ));
 
             put("table", Arrays.asList(
@@ -81,6 +89,15 @@ public final class AutoCompletePackages {
                     "find", "fold", "gfind", "gmatch", "gsub", "insert", "len", "lower", "match",
                     "ncasecmp", "next", "offset", "remove", "reverse", "sub", "title", "upper",
                     "width", "widthindex"));
+
+            put("fs", Arrays.asList(
+                    "ls", "isdir", "isfile", "mkdir", "rm", "exists", "stat",
+                    "currentdir", "chdir", "abs", "basename", "dirname", "set_permissions"));
+
+            put("ptr", Arrays.asList(
+                    "new", "addr", "add", "inc", "dec", "sub", "read", "write",
+                    "get", "set", "malloc", "free", "string", "copy", "move",
+                    "fill", "compare", "of", "null", "is_null", "equal", "tohex"));
 
             put("smgr", Arrays.asList(
                     "getuserid", "hasshareduserid", "getdatadir", "readfile", "writefile",
@@ -96,6 +113,8 @@ public final class AutoCompletePackages {
                     "lrotate", "lshift", "replace", "rrotate", "rshift"));
             put("userdata", Arrays.asList(
                     "isuserdata", "islight", "type", "equals", "tostring", "address", "fromany"));
+            put("thread", Arrays.asList(
+                    "create", "createx"));
             put("vm", Arrays.asList(
                     "execute", "concat", "objlen", "equal", "lt", "le", "tonumber", "tointeger",
                     "gcinfo", "gettop", "memory", "gcstep", "gccollect", "newthread", "status",

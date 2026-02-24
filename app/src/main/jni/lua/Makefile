@@ -6,8 +6,8 @@
 # Your platform. See PLATS for possible values.
 PLAT= guess
 
-CC= gcc -std=c23 -pipe
-CFLAGS= -O3 -funroll-loops -fomit-frame-pointer -ffunction-sections -fdata-sections -fstrict-aliasing -g0 -DNDEBUG -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wimplicit-function-declaration
+CC= gcc -std=c11 -pipe
+CFLAGS= -O3 -funroll-loops -fomit-frame-pointer -ffunction-sections -fdata-sections -fstrict-aliasing -g0 -DNDEBUG -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables -Wimplicit-function-declaration -D_GNU_SOURCE
 
 AR= ar rcu
 RANLIB= ranlib
@@ -15,6 +15,7 @@ RM= rm -f
 UNAME= uname
 
 SYSCFLAGS= -DLUA_DL_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE
+override CFLAGS+= $(SYSCFLAGS)
 SYSLDFLAGS=
 SYSLIBS=
 
@@ -36,8 +37,8 @@ CMCFLAGS=
 PLATS= guess aix bsd c89 freebsd generic ios linux macosx mingw posix solaris
 
 LUA_A=	liblua.a
-CORE_O= lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o lobfuscate.o
-LIB_O= lauxlib.o lbaselib.o lcorolib.o ldblib.o liolib.o lmathlib.o loadlib.o loslib.o lstrlib.o ltablib.o lutf8lib.o linit.o json_parser.o lboolib.o lbitlib.o lptrlib.o ludatalib.o lvmlib.o lclass.o ltranslator.o lsmgrlib.o logtable.o sha256.o aes.o crc.o
+CORE_O= lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o lobfuscate.o lthread.o lstruct.o lnamespace.o lbigint.o lsuper.o
+LIB_O= lauxlib.o lbaselib.o lcorolib.o ldblib.o liolib.o lmathlib.o loadlib.o loslib.o lstrlib.o ltablib.o lutf8lib.o linit.o json_parser.o lboolib.o lbitlib.o lptrlib.o ludatalib.o lvmlib.o lclass.o ltranslator.o lsmgrlib.o logtable.o sha256.o aes.o crc.o lthreadlib.o libhttp.o lfs.o lproclib.o lvmpro.o
 BASE_O= $(CORE_O) $(LIB_O) $(MYOBJS)
 
 LUA_T=	lxclua
@@ -63,7 +64,7 @@ o:	$(ALL_O)
 a:	$(ALL_A)
 
 $(LUA_A): $(BASE_O)
-	$(AR) $@ $(BASE_O)
+	$(AR) $@ $(BASE_O) $(if $(findstring .dll,$(LUA_A)),$(LDFLAGS) $(LIBS))
 	$(RANLIB) $@
 
 $(LUA_T): $(LUA_O) $(LUA_A)
@@ -135,7 +136,7 @@ ios:
 	$(MAKE) $(ALL) SYSCFLAGS="-DLUA_USE_IOS"
 
 Linux linux:
-	$(MAKE) $(ALL) CC="gcc -std=c11" CFLAGS="-O2 -fPIC -DNDEBUG -D_DEFAULT_SOURCE" SYSCFLAGS="-DLUA_USE_LINUX" SYSLIBS="-Wl,-E -ldl -lm" SYSLDFLAGS="-s"
+	$(MAKE) $(ALL) CC="gcc -std=c11" CFLAGS="-O2 -fPIC -DNDEBUG -D_DEFAULT_SOURCE" SYSCFLAGS="-DLUA_USE_LINUX" SYSLIBS="-Wl,-E -ldl -lm -lpthread" SYSLDFLAGS="-s"
 	strip --strip-unneeded $(LUA_T) $(LUAC_T) || true
 
 termux:
@@ -148,24 +149,23 @@ Darwin macos macosx:
 mingw:
 	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=lua55.dll" "LUA_T=lxclua.exe" \
 	"AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded" \
-	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_USE_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
+	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	"MYOBJS=$(MYOBJS)" lxclua.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=lua55.dll" "LUAC_T=luac.exe" \
-	"AR=$(CC) -shared -o" "RANLIB=strip --strip-unneeded" \
-	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_USE_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=liblua.a" "LUAC_T=luac.exe" \
+	"SYSCFLAGS=-DLUA_BUILD_AS_DLL -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	luac.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s" lbcdump.exe
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s -lwininet -lws2_32" lbcdump.exe
 
 mingw-static:
 	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=liblua.a" "LUA_T=lxclua.exe" \
 	"AR=$(AR)" "RANLIB=$(RANLIB)" \
-	"SYSCFLAGS=-DLUA_USE_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
+	"SYSCFLAGS=-DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	"MYOBJS=$(MYOBJS)" lxclua.exe
 	TMPDIR=. TMP=. TEMP=. $(MAKE) "LUA_A=liblua.a" "LUAC_T=luac.exe" \
 	"AR=$(AR)" "RANLIB=$(RANLIB)" \
-	"SYSCFLAGS=-DLUA_USE_DLOPEN -DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s" \
+	"SYSCFLAGS=-DLUA_COMPAT_MATHLIB -DLUA_COMPAT_MAXN -DLUA_COMPAT_MODULE" "SYSLIBS=$(MYLIBS)" "SYSLDFLAGS=-s -lwininet -lws2_32" \
 	luac.exe
-	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s" lbcdump.exe
+	TMPDIR=. TMP=. TEMP=. $(MAKE) "LBCDUMP_T=lbcdump.exe" "SYSLDFLAGS=-s -lwininet -lws2_32" lbcdump.exe
 
 
 posix:
@@ -179,7 +179,7 @@ SunOS solaris:
 # 使用方法: make wasm
 # Emscripten 3.0.0+ 支持 C23 (底层 Clang 18+)
 # Emscripten SDK 路径配置（Windows需要.bat扩展名）
-EMSDK_PATH= e:/Soft/Proje/LXCLUA-NCore/lua/emsdk-main/upstream/emscripten
+EMSDK_PATH= E:/Soft/Proje/LXCLUA-NCore/emsdk/upstream/emscripten
 EMCC= $(EMSDK_PATH)/emcc.bat
 EMAR= $(EMSDK_PATH)/emar.bat
 EMRANLIB= $(EMSDK_PATH)/emranlib.bat
@@ -340,6 +340,7 @@ lfunc.o: lfunc.c lprefix.h lua.h luaconf.h ldebug.h lstate.h lobject.h \
 lgc.o: lgc.c lprefix.h lua.h luaconf.h ldebug.h lstate.h lobject.h \
  llimits.h ltm.h lzio.h lmem.h ldo.h lfunc.h lgc.h lstring.h ltable.h
 linit.o: linit.c lprefix.h lua.h luaconf.h lualib.h lauxlib.h llimits.h
+lfs.o: lfs.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h
 liolib.o: liolib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h llimits.h
 llex.o: llex.c lprefix.h lua.h luaconf.h lctype.h llimits.h ldebug.h \
  lstate.h lobject.h ltm.h lzio.h lmem.h ldo.h lgc.h llex.h lparser.h \
